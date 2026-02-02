@@ -1,0 +1,126 @@
+[package]
+name = "windows-erg"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+authors = ["samuel.garces@protonmail.com>"]
+license = "MIT"
+description = "Ergonomic, idiomatic Rust wrappers for Windows APIs"
+repository = "https://github.com/secsamdev/windows-erg"
+documentation = "https://docs.rs/windows-erg"
+readme = "README.md"
+keywords = ["windows", "api", "ergonomic", "system", "process"]
+categories = ["os::windows-apis", "api-bindings"]
+
+[dependencies]
+# Core Windows API bindings
+windows = { version = "0.58", features = [
+    # Kernel32 - Core system functions
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Memory",
+    "Win32_System_SystemInformation",
+    "Win32_System_Registry",
+    "Win32_System_Kernel",
+    "Win32_System_SystemServices",
+    
+    # WDK - Kernel mode APIs
+    "Wdk_System_Threading",
+    
+    # Security
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    
+    # Event Log & ETW
+    "Win32_System_EventLog",
+    "Win32_System_Diagnostics_Etw",
+    
+    # File System
+    "Win32_Storage_FileSystem",
+    
+    # Network
+    "Win32_NetworkManagement_WindowsFirewall",
+    "Win32_Networking_WinInet",
+    "Win32_Networking_WinHttp",
+    
+    # Foundation
+    "Win32_Foundation",
+    
+    # Other
+    "Win32_System_Com",
+] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Utilities
+bitflags = "2.4"
+
+[dev-dependencies]
+# Testing
+tokio = { version = "1.35", features = ["full"] }
+tempfile = "3.8"
+
+[features]
+default = []
+
+
+# Serialization support
+serde = ["dep:serde"]
+
+# All features
+full = ["serde"]
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+optional = true
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+
+# Examples configuration
+[[example]]
+name = "registry_basics"
+path = "examples/registry_basics.rs"
+
+[[example]]
+name = "registry_write"
+path = "examples/registry_write.rs"
+
+[[example]]
+name = "registry_convenience"
+path = "examples/registry_convenience.rs"
+
+[[example]]
+name = "registry_enumerate"
+path = "examples/registry_enumerate.rs"
+
+[[example]]
+name = "registry_safe_access"
+path = "examples/registry_safe_access.rs"
+
+[[example]]
+name = "process_basics"
+path = "examples/process_basics.rs"
+
+[[example]]
+name = "process_monitoring"
+path = "examples/process_monitoring.rs"
+
+[[example]]
+name = "process_tree"
+path = "examples/process_tree.rs"
+
+[[example]]
+name = "registry_operations"
+path = "examples/registry_operations.rs"
