@@ -2,15 +2,15 @@
 
 use std::collections::HashMap;
 use std::mem::size_of;
+use windows::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
 use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 use windows::Win32::System::Threading::{
     PEB, PROCESS_BASIC_INFORMATION, RTL_USER_PROCESS_PARAMETERS,
 };
-use windows::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
 
-use crate::error::{Error, ProcessError, ProcessOpenError, Result};
 use super::processes::Process;
-use super::types::{ProcessParameters, ImagePath};
+use super::types::{ImagePath, ProcessParameters};
+use crate::error::{Error, ProcessError, ProcessOpenError, Result};
 
 // UNICODE_STRING structure (used in RTL_USER_PROCESS_PARAMETERS)
 #[repr(C)]
@@ -31,20 +31,20 @@ const RTL_USER_PROCESS_PARAMETERS_SIZE: usize = size_of::<RTL_USER_PROCESS_PARAM
 // https://ntdoc.m417z.com/rtl_user_process_parameters
 #[repr(C)]
 struct RTL_USER_PROCESS_PARAMETERS_PARTIAL {
-    _pad1: [u8; 32],                    // Reserved fields (0x00-0x1F)
-    _flags: u32,                        // Flags at 0x20
-    _pad2: [u8; 8],                     // More reserved (0x24-0x2B)
-    stdin: *mut u8,                     // 0x2C
-    stdout: *mut u8,                    // 0x34
-    stderr: *mut u8,                    // 0x3C
-    image_path_name: UNICODE_STRING,    // 0x44
-    command_line: UNICODE_STRING,       // 0x54
-    environment: *mut u16,              // 0x64 - Environment block pointer
+    _pad1: [u8; 32],                 // Reserved fields (0x00-0x1F)
+    _flags: u32,                     // Flags at 0x20
+    _pad2: [u8; 8],                  // More reserved (0x24-0x2B)
+    stdin: *mut u8,                  // 0x2C
+    stdout: *mut u8,                 // 0x34
+    stderr: *mut u8,                 // 0x3C
+    image_path_name: UNICODE_STRING, // 0x44
+    command_line: UNICODE_STRING,    // 0x54
+    environment: *mut u16,           // 0x64 - Environment block pointer
 }
 
 impl Process {
     /// Get the command line of the process.
-    /// 
+    ///
     /// This reads the command line from the Process Environment Block (PEB).
     pub fn command_line(&self) -> Result<String> {
         let mut buffer = Vec::with_capacity(8192);
@@ -64,16 +64,21 @@ impl Process {
     }
 
     /// Get the environment variables using a reusable output buffer.
-    pub fn environment_with_buffer(&self, out_buffer: &mut Vec<u8>) -> Result<HashMap<String, String>> {
+    pub fn environment_with_buffer(
+        &self,
+        out_buffer: &mut Vec<u8>,
+    ) -> Result<HashMap<String, String>> {
         // Read PEB to get RTL_USER_PROCESS_PARAMETERS pointer
         let peb_addr = self.read_peb_address(out_buffer)?;
-        
+
         out_buffer.clear();
         if out_buffer.capacity() < PEB_SIZE {
             out_buffer.reserve(PEB_SIZE - out_buffer.capacity());
         }
-        unsafe { out_buffer.set_len(PEB_SIZE); }
-        
+        unsafe {
+            out_buffer.set_len(PEB_SIZE);
+        }
+
         let mut bytes_read = 0;
         unsafe {
             ReadProcessMemory(
@@ -85,9 +90,11 @@ impl Process {
             )
         }
         .map_err(|e| {
-            Error::Process(ProcessError::OpenFailed(
-                ProcessOpenError::with_code(self.id().as_u32(), "Failed to read PEB", e.code().0)
-            ))
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.id().as_u32(),
+                "Failed to read PEB",
+                e.code().0,
+            )))
         })?;
 
         let peb = unsafe { &*(out_buffer.as_ptr() as *const PEB) };
@@ -98,8 +105,10 @@ impl Process {
         if out_buffer.capacity() < RTL_USER_PROCESS_PARAMETERS_SIZE {
             out_buffer.reserve(RTL_USER_PROCESS_PARAMETERS_SIZE - out_buffer.capacity());
         }
-        unsafe { out_buffer.set_len(RTL_USER_PROCESS_PARAMETERS_SIZE); }
-        
+        unsafe {
+            out_buffer.set_len(RTL_USER_PROCESS_PARAMETERS_SIZE);
+        }
+
         bytes_read = 0;
         unsafe {
             ReadProcessMemory(
@@ -111,14 +120,17 @@ impl Process {
             )
         }
         .map_err(|e| {
-            Error::Process(ProcessError::OpenFailed(
-                ProcessOpenError::with_code(self.id().as_u32(), "Failed to read process parameters", e.code().0)
-            ))
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.id().as_u32(),
+                "Failed to read process parameters",
+                e.code().0,
+            )))
         })?;
 
         // Cast to our partial struct to get the environment pointer
-        let params = unsafe { &*(out_buffer.as_ptr() as *const RTL_USER_PROCESS_PARAMETERS_PARTIAL) };
-        
+        let params =
+            unsafe { &*(out_buffer.as_ptr() as *const RTL_USER_PROCESS_PARAMETERS_PARTIAL) };
+
         // Read environment block from the environment pointer
         self.read_environment_block(params.environment as usize, out_buffer)
     }
@@ -140,8 +152,10 @@ impl Process {
         if buffer.capacity() < PROCESS_BASIC_INFORMATION_SIZE {
             buffer.reserve(PROCESS_BASIC_INFORMATION_SIZE - buffer.capacity());
         }
-        unsafe { buffer.set_len(PROCESS_BASIC_INFORMATION_SIZE); }
-        
+        unsafe {
+            buffer.set_len(PROCESS_BASIC_INFORMATION_SIZE);
+        }
+
         let mut return_length = 0u32;
         unsafe {
             NtQueryInformationProcess(
@@ -154,9 +168,11 @@ impl Process {
             .ok()
         }
         .map_err(|e| {
-            Error::Process(ProcessError::OpenFailed(
-                ProcessOpenError::with_code(self.id().as_u32(), "Failed to query process information", e.code().0)
-            ))
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.id().as_u32(),
+                "Failed to query process information",
+                e.code().0,
+            )))
         })?;
 
         let basic_info = unsafe { &*(buffer.as_ptr() as *const PROCESS_BASIC_INFORMATION) };
@@ -166,14 +182,16 @@ impl Process {
     /// Internal: Read process parameters from PEB.
     fn read_process_parameters(&self, buffer: &mut Vec<u8>) -> Result<ProcessParameters> {
         let peb_addr = self.read_peb_address(buffer)?;
-        
+
         // Read PEB
         buffer.clear();
         if buffer.capacity() < PEB_SIZE {
             buffer.reserve(PEB_SIZE - buffer.capacity());
         }
-        unsafe { buffer.set_len(PEB_SIZE); }
-        
+        unsafe {
+            buffer.set_len(PEB_SIZE);
+        }
+
         let mut bytes_read = 0;
         unsafe {
             ReadProcessMemory(
@@ -185,9 +203,11 @@ impl Process {
             )
         }
         .map_err(|e| {
-            Error::Process(ProcessError::OpenFailed(
-                ProcessOpenError::with_code(self.id().as_u32(), "Failed to read PEB for parameters", e.code().0)
-            ))
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.id().as_u32(),
+                "Failed to read PEB for parameters",
+                e.code().0,
+            )))
         })?;
 
         let peb = unsafe { &*(buffer.as_ptr() as *const PEB) };
@@ -198,8 +218,10 @@ impl Process {
         if buffer.capacity() < RTL_USER_PROCESS_PARAMETERS_SIZE {
             buffer.reserve(RTL_USER_PROCESS_PARAMETERS_SIZE - buffer.capacity());
         }
-        unsafe { buffer.set_len(RTL_USER_PROCESS_PARAMETERS_SIZE); }
-        
+        unsafe {
+            buffer.set_len(RTL_USER_PROCESS_PARAMETERS_SIZE);
+        }
+
         bytes_read = 0;
         unsafe {
             ReadProcessMemory(
@@ -211,9 +233,11 @@ impl Process {
             )
         }
         .map_err(|e| {
-            Error::Process(ProcessError::OpenFailed(
-                ProcessOpenError::with_code(self.id().as_u32(), "Failed to read RTL_USER_PROCESS_PARAMETERS", e.code().0)
-            ))
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.id().as_u32(),
+                "Failed to read RTL_USER_PROCESS_PARAMETERS",
+                e.code().0,
+            )))
         })?;
 
         let params = unsafe { &*(buffer.as_ptr() as *const RTL_USER_PROCESS_PARAMETERS) };
@@ -254,8 +278,10 @@ impl Process {
         if buffer.capacity() < length {
             buffer.reserve(length - buffer.capacity());
         }
-        unsafe { buffer.set_len(length); }
-        
+        unsafe {
+            buffer.set_len(length);
+        }
+
         let mut bytes_read = 0;
         unsafe {
             ReadProcessMemory(
@@ -267,18 +293,22 @@ impl Process {
             )
         }
         .map_err(|e| {
-            Error::Process(ProcessError::OpenFailed(
-                ProcessOpenError::with_code(self.id().as_u32(), "Failed to read string from process memory", e.code().0)
-            ))
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.id().as_u32(),
+                "Failed to read string from process memory",
+                e.code().0,
+            )))
         })?;
 
-        let u16_slice = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const u16, bytes_read / 2)
-        };
+        let u16_slice =
+            unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const u16, bytes_read / 2) };
 
         // Find null terminator or use full length
-        let end = u16_slice.iter().position(|&c| c == 0).unwrap_or(u16_slice.len());
-        
+        let end = u16_slice
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(u16_slice.len());
+
         Ok(String::from_utf16_lossy(&u16_slice[..end]))
     }
 
@@ -297,7 +327,7 @@ impl Process {
         let max_size = 65536;
         buffer.clear();
         buffer.resize(max_size, 0);
-        
+
         let mut bytes_read = 0;
         unsafe {
             ReadProcessMemory(
@@ -309,15 +339,16 @@ impl Process {
             )
         }
         .map_err(|e| {
-            Error::Process(ProcessError::OpenFailed(
-                ProcessOpenError::with_code(self.id().as_u32(), "Failed to read environment block", e.code().0)
-            ))
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.id().as_u32(),
+                "Failed to read environment block",
+                e.code().0,
+            )))
         })?;
 
         // Parse the environment block
-        let u16_data = unsafe {
-            std::slice::from_raw_parts(buffer.as_ptr() as *const u16, bytes_read / 2)
-        };
+        let u16_data =
+            unsafe { std::slice::from_raw_parts(buffer.as_ptr() as *const u16, bytes_read / 2) };
 
         let mut env_vars = HashMap::new();
         let mut pos = 0;
@@ -338,14 +369,13 @@ impl Process {
 
             // Convert this entry to string
             let entry = String::from_utf16_lossy(&u16_data[start..pos]);
-            
+
             // Split on first '=' to get key and value
             if let Some(eq_pos) = entry.find('=') {
                 let key = entry[..eq_pos].to_string();
                 let value = entry[eq_pos + 1..].to_string();
                 env_vars.insert(key, value);
             }
-
 
             pos += 1; // Skip the null terminator
         }
@@ -366,7 +396,7 @@ mod tests {
     /// Helper to create environment block bytes (KEY=VALUE\0KEY=VALUE\0\0)
     fn create_env_block(pairs: &[(&str, &str)]) -> Vec<u8> {
         let mut block = Vec::new();
-        
+
         for (key, value) in pairs {
             let entry = format!("{}={}", key, value);
             for u16_val in entry.encode_utf16() {
@@ -377,11 +407,11 @@ mod tests {
             block.push(0);
             block.push(0);
         }
-        
+
         // Double null to end block
         block.push(0);
         block.push(0);
-        
+
         block
     }
 
@@ -389,38 +419,41 @@ mod tests {
     fn test_parse_simple_environment() {
         // Create a simple environment block: PATH=C:\Windows\0\0
         let env_block = create_env_block(&[("PATH", "C:\\Windows"), ("TEMP", "C:\\Temp")]);
-        
+
         // Convert to u16 slice for parsing
         let u16_data: Vec<u16> = env_block
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         // Manual parsing logic (same as in read_environment_block)
         let mut env_vars: HashMap<String, String> = HashMap::new();
         let mut pos = 0;
-        
+
         while pos < u16_data.len() {
             let start = pos;
             while pos < u16_data.len() && u16_data[pos] != 0 {
                 pos += 1;
             }
-            
+
             if start == pos {
                 break;
             }
-            
+
             let entry = String::from_utf16_lossy(&u16_data[start..pos]);
             if let Some(eq_pos) = entry.find('=') {
                 let key = entry[..eq_pos].to_string();
                 let value = entry[eq_pos + 1..].to_string();
                 env_vars.insert(key, value);
             }
-            
+
             pos += 1;
         }
-        
-        assert_eq!(env_vars.get("PATH").map(|s| s.as_str()), Some("C:\\Windows"));
+
+        assert_eq!(
+            env_vars.get("PATH").map(|s| s.as_str()),
+            Some("C:\\Windows")
+        );
         assert_eq!(env_vars.get("TEMP").map(|s| s.as_str()), Some("C:\\Temp"));
     }
 
@@ -428,35 +461,35 @@ mod tests {
     fn test_parse_environment_with_equals_in_value() {
         // Environment variable with = in the value
         let env_block = create_env_block(&[("URL", "https://example.com?foo=bar")]);
-        
+
         let u16_data: Vec<u16> = env_block
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         let mut env_vars: HashMap<String, String> = HashMap::new();
         let mut pos = 0;
-        
+
         while pos < u16_data.len() {
             let start = pos;
             while pos < u16_data.len() && u16_data[pos] != 0 {
                 pos += 1;
             }
-            
+
             if start == pos {
                 break;
             }
-            
+
             let entry = String::from_utf16_lossy(&u16_data[start..pos]);
             if let Some(eq_pos) = entry.find('=') {
                 let key = entry[..eq_pos].to_string();
                 let value = entry[eq_pos + 1..].to_string();
                 env_vars.insert(key, value);
             }
-            
+
             pos += 1;
         }
-        
+
         assert_eq!(
             env_vars.get("URL").map(|s| s.as_str()),
             Some("https://example.com?foo=bar")
@@ -474,38 +507,41 @@ mod tests {
             ("COMPUTERNAME", "DESKTOP"),
             ("PROCESSOR_ARCHITECTURE", "AMD64"),
         ];
-        
+
         let env_block = create_env_block(&pairs);
         let u16_data: Vec<u16> = env_block
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         let mut env_vars = HashMap::new();
         let mut pos = 0;
-        
+
         while pos < u16_data.len() {
             let start = pos;
             while pos < u16_data.len() && u16_data[pos] != 0 {
                 pos += 1;
             }
-            
+
             if start == pos {
                 break;
             }
-            
+
             let entry = String::from_utf16_lossy(&u16_data[start..pos]);
             if let Some(eq_pos) = entry.find('=') {
                 let key = entry[..eq_pos].to_string();
                 let value = entry[eq_pos + 1..].to_string();
                 env_vars.insert(key, value);
             }
-            
+
             pos += 1;
         }
-        
+
         assert_eq!(env_vars.len(), 6);
-        assert_eq!(env_vars.get("PATH").map(|s| s.as_str()), Some("C:\\Windows"));
+        assert_eq!(
+            env_vars.get("PATH").map(|s| s.as_str()),
+            Some("C:\\Windows")
+        );
         assert_eq!(env_vars.get("USERNAME").map(|s| s.as_str()), Some("Admin"));
         assert_eq!(
             env_vars.get("PROCESSOR_ARCHITECTURE").map(|s| s.as_str()),
@@ -517,42 +553,49 @@ mod tests {
     fn test_parse_environment_unicode_values() {
         // Test with Unicode characters in environment values
         let env_block = create_env_block(&[("TEST", "Hello🌍World")]);
-        
+
         let u16_data: Vec<u16> = env_block
             .chunks_exact(2)
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
-        
+
         let mut env_vars: HashMap<String, String> = HashMap::new();
         let mut pos = 0;
-        
+
         while pos < u16_data.len() {
             let start = pos;
             while pos < u16_data.len() && u16_data[pos] != 0 {
                 pos += 1;
             }
-            
+
             if start == pos {
                 break;
             }
-            
+
             let entry = String::from_utf16_lossy(&u16_data[start..pos]);
             if let Some(eq_pos) = entry.find('=') {
                 let key = entry[..eq_pos].to_string();
                 let value = entry[eq_pos + 1..].to_string();
                 env_vars.insert(key, value);
             }
-            
+
             pos += 1;
         }
-        
-        assert_eq!(env_vars.get("TEST").map(|s| s.as_str()), Some("Hello🌍World"));
+
+        assert_eq!(
+            env_vars.get("TEST").map(|s| s.as_str()),
+            Some("Hello🌍World")
+        );
     }
 
     #[test]
     fn test_unicode_string_struct_layout() {
         // Verify that UNICODE_STRING has correct size and layout
-        assert_eq!(size_of::<UNICODE_STRING>(), 16, "UNICODE_STRING should be 16 bytes");
+        assert_eq!(
+            size_of::<UNICODE_STRING>(),
+            16,
+            "UNICODE_STRING should be 16 bytes"
+        );
     }
 
     #[test]
@@ -577,16 +620,16 @@ mod tests {
     fn test_environment_block_structure() {
         // Verify the structure of our environment block creation
         let block = create_env_block(&[("A", "B"), ("C", "D")]);
-        
+
         // Just verify it's not empty and contains the right structure
         assert!(!block.is_empty(), "Block should not be empty");
-        
+
         // Convert and verify first few characters
         if block.len() >= 6 {
             let a_char = u16::from_le_bytes([block[0], block[1]]);
             let eq_char = u16::from_le_bytes([block[2], block[3]]);
             let b_char = u16::from_le_bytes([block[4], block[5]]);
-            
+
             assert_eq!(a_char, b'A' as u16, "First char should be 'A'");
             assert_eq!(eq_char, b'=' as u16, "Second should be '='");
             assert_eq!(b_char, b'B' as u16, "Third should be 'B'");
@@ -595,17 +638,19 @@ mod tests {
 
     // Note: These integration tests read actual process PEB data.
     // They may not work with pseudo-handles in all cases - using #[ignore] to make optional
-    
+
     #[test]
-    #[ignore]  // May fail with pseudo-handle - run manually: cargo test -- --ignored
+    #[ignore] // May fail with pseudo-handle - run manually: cargo test -- --ignored
     fn test_command_line_of_current_process() {
         // Get current process and read its command line
         let current_process = Process::current();
-        let cmd_line = current_process.command_line().expect("Should read command line");
-        
+        let cmd_line = current_process
+            .command_line()
+            .expect("Should read command line");
+
         // Command line should not be empty
         assert!(!cmd_line.is_empty(), "Command line should not be empty");
-        
+
         // Should contain the executable name or path
         // For test runner, should contain something like "cargo" or the test executable
         assert!(
@@ -615,39 +660,47 @@ mod tests {
     }
 
     #[test]
-    #[ignore]  // May fail with pseudo-handle - run manually: cargo test -- --ignored
+    #[ignore] // May fail with pseudo-handle - run manually: cargo test -- --ignored
     fn test_command_line_with_buffer() {
         // Test the buffer-reusable version
         let current_process = Process::current();
         let mut buffer = Vec::with_capacity(8192);
-        
+
         let cmd_line = current_process
             .command_line_with_buffer(&mut buffer)
             .expect("Should read command line with buffer");
-        
+
         assert!(!cmd_line.is_empty(), "Command line should not be empty");
-        
+
         // Reuse buffer for second call - should work correctly
         let cmd_line2 = current_process
             .command_line_with_buffer(&mut buffer)
             .expect("Should read command line again");
-        
+
         assert_eq!(cmd_line, cmd_line2, "Command line should be consistent");
     }
 
     #[test]
-    #[ignore]  // May fail with pseudo-handle - run manually: cargo test -- --ignored
+    #[ignore] // May fail with pseudo-handle - run manually: cargo test -- --ignored
     fn test_parameters_of_current_process() {
         // Get current process and read its parameters
         let current_process = Process::current();
-        let params = current_process.parameters().expect("Should read parameters");
-        
+        let params = current_process
+            .parameters()
+            .expect("Should read parameters");
+
         // Command line should not be empty
-        assert!(!params.command_line.is_empty(), "Parameters command_line should not be empty");
-        
+        assert!(
+            !params.command_line.is_empty(),
+            "Parameters command_line should not be empty"
+        );
+
         // Image path should be set (the executable path)
         let image_str = params.image_path.as_str();
-        assert!(!image_str.is_empty(), "Parameters image_path should not be empty");
+        assert!(
+            !image_str.is_empty(),
+            "Parameters image_path should not be empty"
+        );
         assert!(
             image_str.contains(".exe") || !image_str.is_empty(),
             "Image path should look like an executable"
@@ -655,24 +708,30 @@ mod tests {
     }
 
     #[test]
-    #[ignore]  // May fail with pseudo-handle - run manually: cargo test -- --ignored
+    #[ignore] // May fail with pseudo-handle - run manually: cargo test -- --ignored
     fn test_parameters_with_buffer() {
         // Test the buffer-reusable version
         let current_process = Process::current();
         let mut buffer = Vec::with_capacity(8192);
-        
+
         let params = current_process
             .parameters_with_buffer(&mut buffer)
             .expect("Should read parameters with buffer");
-        
-        assert!(!params.command_line.is_empty(), "Command line should not be empty");
-        
+
+        assert!(
+            !params.command_line.is_empty(),
+            "Command line should not be empty"
+        );
+
         // Reuse buffer for second call
         let params2 = current_process
             .parameters_with_buffer(&mut buffer)
             .expect("Should read parameters again");
-        
-        assert_eq!(params.command_line, params2.command_line, "Command line should be consistent");
+
+        assert_eq!(
+            params.command_line, params2.command_line,
+            "Command line should be consistent"
+        );
         assert_eq!(
             params.image_path.as_str(),
             params2.image_path.as_str(),
@@ -681,17 +740,17 @@ mod tests {
     }
 
     #[test]
-    #[ignore]  // May fail with pseudo-handle - run manually: cargo test -- --ignored
+    #[ignore] // May fail with pseudo-handle - run manually: cargo test -- --ignored
     fn test_environment_of_current_process() {
         // Get current process and read its environment variables
         let current_process = Process::current();
         let env = current_process
             .environment()
             .expect("Should read environment variables");
-        
+
         // Should have some environment variables
         assert!(!env.is_empty(), "Environment should not be empty");
-        
+
         // PATH is almost always present
         let has_path = env.iter().any(|(k, _)| k.eq_ignore_ascii_case("PATH"));
         assert!(
@@ -701,41 +760,45 @@ mod tests {
     }
 
     #[test]
-    #[ignore]  // May fail with pseudo-handle - run manually: cargo test -- --ignored
+    #[ignore] // May fail with pseudo-handle - run manually: cargo test -- --ignored
     fn test_environment_with_buffer() {
         // Test the buffer-reusable version
         let current_process = Process::current();
         let mut buffer = Vec::with_capacity(8192);
-        
+
         let env = current_process
             .environment_with_buffer(&mut buffer)
             .expect("Should read environment with buffer");
-        
+
         assert!(!env.is_empty(), "Environment should not be empty");
-        
+
         // Reuse buffer for second call
         let env2 = current_process
             .environment_with_buffer(&mut buffer)
             .expect("Should read environment again");
-        
-        assert_eq!(env.len(), env2.len(), "Environment variable count should be consistent");
+
+        assert_eq!(
+            env.len(),
+            env2.len(),
+            "Environment variable count should be consistent"
+        );
     }
 
     #[test]
-    #[ignore]  // May fail with pseudo-handle - run manually: cargo test -- --ignored
+    #[ignore] // May fail with pseudo-handle - run manually: cargo test -- --ignored
     fn test_environment_common_variables() {
         // Check for commonly present environment variables
         let current_process = Process::current();
         let env = current_process
             .environment()
             .expect("Should read environment variables");
-        
+
         // At least one of these should be present
         let common_vars = ["PATH", "TEMP", "TMP", "WINDIR", "SYSTEMROOT", "USERNAME"];
-        let found = common_vars.iter().any(|var| {
-            env.iter().any(|(k, _)| k.eq_ignore_ascii_case(var))
-        });
-        
+        let found = common_vars
+            .iter()
+            .any(|var| env.iter().any(|(k, _)| k.eq_ignore_ascii_case(var)));
+
         assert!(
             found,
             "Should find at least one common environment variable (PATH, TEMP, WINDIR, etc.)"
@@ -743,22 +806,25 @@ mod tests {
     }
 
     #[test]
-    #[ignore]  // May fail with pseudo-handle - run manually: cargo test -- --ignored
+    #[ignore] // May fail with pseudo-handle - run manually: cargo test -- --ignored
     fn test_environment_values_are_valid_strings() {
         // Verify all environment values are valid UTF-16 strings
         let current_process = Process::current();
         let env = current_process
             .environment()
             .expect("Should read environment variables");
-        
+
         // All keys and values should be non-empty and valid strings
         for (key, _value) in env.iter() {
-            assert!(!key.is_empty(), "Environment variable key should not be empty");
+            assert!(
+                !key.is_empty(),
+                "Environment variable key should not be empty"
+            );
             // Value can be empty (e.g., some vars have empty values)
-            assert!(key.chars().all(|c| c.is_ascii_graphic() || c == '_'), 
-                "Environment variable key should contain valid characters");
+            assert!(
+                key.chars().all(|c| c.is_ascii_graphic() || c == '_'),
+                "Environment variable key should contain valid characters"
+            );
         }
     }
 }
-
-

@@ -6,6 +6,9 @@ use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 use windows::Win32::System::Threading::PROCESS_ACCESS_RIGHTS;
 
+// Re-export common types
+pub use crate::types::{ProcessId, ThreadId};
+
 /// Case-insensitive string key for HashMap lookups.
 /// Hashes and compares strings case-insensitively without allocating lowercase strings.
 #[derive(Debug, Clone, Copy)]
@@ -113,7 +116,7 @@ fn init_path_cache() -> HashMap<CaseInsensitiveKey<'static>, &'static str> {
 }
 
 /// Efficient image path representation for EXEs and DLLs.
-/// 
+///
 /// Provides:
 /// - Path caching to reduce memory usage
 /// - Case-insensitive comparison
@@ -130,72 +133,72 @@ impl ImagePath {
     /// Create an ImagePath from a string, using cache when possible.
     pub fn new(path: impl Into<String>) -> Self {
         let path_str = path.into();
-        
+
         // Try to find in cache
         if let Some(cached) = Self::find_cached(&path_str) {
             return ImagePath::Cached(cached);
         }
-        
+
         ImagePath::Owned(path_str)
     }
 
     /// Create an ImagePath from a &str, checking cache without allocating if found.
-    /// 
+    ///
     /// This is more efficient than `new()` when working with string slices,
     /// as it avoids allocation if the path is in the cache.
-    /// 
+    ///
     /// Automatically strips null terminators from the input to enable cache hits
     /// when receiving null-terminated strings from Windows APIs.
     pub fn from_str(path: &str) -> Self {
         // Strip null terminator if present (common in Windows API results)
         let path = path.trim_end_matches('\0');
-        
+
         // Try to find in cache first (no allocation needed)
         if let Some(cached) = Self::find_cached_str(path) {
             return ImagePath::Cached(cached);
         }
-        
+
         // Not in cache, allocate
         ImagePath::Owned(path.to_string())
     }
 
     /// Create an ImagePath from UTF-16 data (e.g., from GetProcessImageFileNameW).
-    /// 
+    ///
     /// This is the most efficient constructor for Windows API results that return UTF-16.
     /// It checks the cache before allocating, using the lossy UTF-16 decoding.
     /// Automatically strips null terminators for cache hits with null-terminated strings.
     pub fn from_utf16(utf16_data: &[u16]) -> Self {
         // Decode UTF-16 (lossy conversion for invalid sequences)
         let path_string = String::from_utf16_lossy(utf16_data);
-        
+
         // Strip null terminator if present (common in Windows API results)
         let path_str = path_string.trim_end_matches('\0');
         let path_lower = path_str.to_lowercase();
-        
+
         // Try cache lookup with the lowercase version
         if let Some(cached) = Self::find_cached_str(&path_lower) {
             return ImagePath::Cached(cached);
         }
-        
+
         // Not in cache, use the allocated string (without null terminator)
         ImagePath::Owned(path_str.to_string())
     }
 
     /// Create an ImagePath from UTF-8 data (e.g., from Windows API results).
-    /// 
+    ///
     /// Returns None if the data is not valid UTF-8.
     /// Automatically strips null terminators for cache hits with null-terminated strings.
     pub fn from_utf8(utf8_data: &[u8]) -> Option<Self> {
         let path_str = std::str::from_utf8(utf8_data).ok()?;
-        
+
         // Strip null terminator if present
         let path_str = path_str.trim_end_matches('\0');
-        
+
         // Try to find in cache first
         if let Some(cached) = Self::find_cached_str(path_str) {
             return Some(ImagePath::Cached(cached));
         }
-        
+
         // Not in cache, allocate
         Some(ImagePath::Owned(path_str.to_string()))
     }
@@ -240,10 +243,7 @@ impl ImagePath {
 
     /// Get the file name only (without path).
     pub fn file_name(&self) -> &str {
-        self.as_str()
-            .rsplit('\\')
-            .next()
-            .unwrap_or(self.as_str())
+        self.as_str().rsplit('\\').next().unwrap_or(self.as_str())
     }
 
     /// Find a matching cached path for the given string (does lowercase comparison).
@@ -307,74 +307,6 @@ impl PartialEq<ImagePath> for &str {
     }
 }
 
-/// Strongly-typed process identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ProcessId(pub u32);
-
-impl ProcessId {
-    /// Create a new process ID.
-    pub fn new(id: u32) -> Self {
-        ProcessId(id)
-    }
-
-    /// Get the raw process ID.
-    pub fn as_u32(&self) -> u32 {
-        self.0
-    }
-}
-
-impl From<u32> for ProcessId {
-    fn from(id: u32) -> Self {
-        ProcessId(id)
-    }
-}
-
-impl From<ProcessId> for u32 {
-    fn from(id: ProcessId) -> Self {
-        id.0
-    }
-}
-
-impl fmt::Display for ProcessId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Strongly-typed thread identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ThreadId(pub u32);
-
-impl ThreadId {
-    /// Create a new thread ID.
-    pub fn new(id: u32) -> Self {
-        ThreadId(id)
-    }
-
-    /// Get the raw thread ID.
-    pub fn as_u32(&self) -> u32 {
-        self.0
-    }
-}
-
-impl From<u32> for ThreadId {
-    fn from(id: u32) -> Self {
-        ThreadId(id)
-    }
-}
-
-impl From<ThreadId> for u32 {
-    fn from(id: ThreadId) -> Self {
-        id.0
-    }
-}
-
-impl fmt::Display for ThreadId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 /// Process access rights.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessAccess {
@@ -399,7 +331,7 @@ pub enum ProcessAccess {
 impl ProcessAccess {
     pub(crate) fn to_windows(self) -> PROCESS_ACCESS_RIGHTS {
         use windows::Win32::System::Threading::*;
-        
+
         match self {
             ProcessAccess::QueryInformation => PROCESS_QUERY_INFORMATION,
             ProcessAccess::QueryLimitedInformation => PROCESS_QUERY_LIMITED_INFORMATION,
@@ -506,7 +438,7 @@ mod tests {
         // Test that cache lookup is case-insensitive
         let path_upper = ImagePath::from_str("C:\\WINDOWS\\SYSTEM32\\KERNEL32.DLL");
         let path_mixed = ImagePath::from_str("c:\\windows\\system32\\kernel32.dll");
-        
+
         assert!(path_upper.is_cached(), "Uppercase path should be cached");
         assert!(path_mixed.is_cached(), "Lowercase path should be cached");
     }
@@ -521,9 +453,11 @@ mod tests {
     #[test]
     fn test_image_path_from_utf16() {
         // Test UTF-16 construction
-        let utf16: Vec<u16> = "C:\\Windows\\System32\\advapi32.dll".encode_utf16().collect();
+        let utf16: Vec<u16> = "C:\\Windows\\System32\\advapi32.dll"
+            .encode_utf16()
+            .collect();
         let path = ImagePath::from_utf16(&utf16);
-        
+
         assert!(path.is_cached(), "UTF-16 common path should be cached");
         assert_eq!(path.as_str(), "C:\\Windows\\System32\\advapi32.dll");
     }
@@ -533,7 +467,7 @@ mod tests {
         // Test UTF-16 with different case
         let utf16: Vec<u16> = "C:\\WINDOWS\\SYSTEM32\\USER32.DLL".encode_utf16().collect();
         let path = ImagePath::from_utf16(&utf16);
-        
+
         assert!(path.is_cached(), "UTF-16 uppercase path should be cached");
     }
 
@@ -571,7 +505,10 @@ mod tests {
     fn test_image_path_partial_eq_different_case() {
         let path1 = ImagePath::from_str("C:\\Windows\\System32\\kernel32.dll");
         let path2 = ImagePath::from_str("c:\\windows\\system32\\kernel32.dll");
-        assert_eq!(path1, path2, "Different case should be equal (case-insensitive)");
+        assert_eq!(
+            path1, path2,
+            "Different case should be equal (case-insensitive)"
+        );
     }
 
     #[test]
@@ -585,7 +522,7 @@ mod tests {
     fn test_image_path_eq_owned_vs_cached() {
         let cached = ImagePath::from_str("C:\\Windows\\System32\\kernel32.dll");
         let owned = ImagePath::from_str("C:\\Windows\\System32\\kernel32.dll");
-        
+
         // Both should be cached and equal
         assert!(cached.is_cached());
         assert!(owned.is_cached());
@@ -610,13 +547,19 @@ mod tests {
         assert!(sys_path.is_system_path(), "Should detect Windows path");
 
         let other_path = ImagePath::from_str("C:\\Program Files\\app.exe");
-        assert!(!other_path.is_system_path(), "Should not detect non-Windows path");
+        assert!(
+            !other_path.is_system_path(),
+            "Should not detect non-Windows path"
+        );
     }
 
     #[test]
     fn test_image_path_is_system_path_case_insensitive() {
         let sys_path = ImagePath::from_str("C:\\WINDOWS\\SYSTEM32\\kernel32.dll");
-        assert!(sys_path.is_system_path(), "Should detect Windows path (uppercase)");
+        assert!(
+            sys_path.is_system_path(),
+            "Should detect Windows path (uppercase)"
+        );
     }
 
     #[test]
@@ -625,30 +568,57 @@ mod tests {
         assert!(wow64_path.is_wow64(), "Should detect SysWOW64 path");
 
         let normal_path = ImagePath::from_str("C:\\Windows\\System32\\kernel32.dll");
-        assert!(!normal_path.is_wow64(), "Should not detect System32 as WOW64");
+        assert!(
+            !normal_path.is_wow64(),
+            "Should not detect System32 as WOW64"
+        );
     }
 
     #[test]
     fn test_image_path_is_wow64_case_insensitive() {
         let wow64_path = ImagePath::from_str("C:\\WINDOWS\\SYSWOW64\\kernel32.dll");
-        assert!(wow64_path.is_wow64(), "Should detect SysWOW64 path (uppercase)");
+        assert!(
+            wow64_path.is_wow64(),
+            "Should detect SysWOW64 path (uppercase)"
+        );
     }
 
     #[test]
     fn test_image_path_ends_with_case_insensitive() {
         let path = ImagePath::from_str("C:\\Windows\\System32\\kernel32.dll");
-        assert!(path.ends_with_case_insensitive(".dll"), "Should end with .dll");
-        assert!(path.ends_with_case_insensitive(".DLL"), "Should end with .DLL (case-insensitive)");
-        assert!(!path.ends_with_case_insensitive(".exe"), "Should not end with .exe");
+        assert!(
+            path.ends_with_case_insensitive(".dll"),
+            "Should end with .dll"
+        );
+        assert!(
+            path.ends_with_case_insensitive(".DLL"),
+            "Should end with .DLL (case-insensitive)"
+        );
+        assert!(
+            !path.ends_with_case_insensitive(".exe"),
+            "Should not end with .exe"
+        );
     }
 
     #[test]
     fn test_image_path_contains_case_insensitive() {
         let path = ImagePath::from_str("C:\\Windows\\System32\\kernel32.dll");
-        assert!(path.contains_case_insensitive("system32"), "Should contain system32");
-        assert!(path.contains_case_insensitive("SYSTEM32"), "Should contain SYSTEM32 (case-insensitive)");
-        assert!(path.contains_case_insensitive("kernel32"), "Should contain kernel32");
-        assert!(!path.contains_case_insensitive("syswow64"), "Should not contain syswow64");
+        assert!(
+            path.contains_case_insensitive("system32"),
+            "Should contain system32"
+        );
+        assert!(
+            path.contains_case_insensitive("SYSTEM32"),
+            "Should contain SYSTEM32 (case-insensitive)"
+        );
+        assert!(
+            path.contains_case_insensitive("kernel32"),
+            "Should contain kernel32"
+        );
+        assert!(
+            !path.contains_case_insensitive("syswow64"),
+            "Should not contain syswow64"
+        );
     }
 
     #[test]
@@ -663,7 +633,7 @@ mod tests {
     fn test_image_path_clone() {
         let path1 = ImagePath::from_str("C:\\Windows\\System32\\kernel32.dll");
         let path2 = path1.clone();
-        
+
         assert_eq!(path1, path2);
         assert_eq!(path1.as_str(), path2.as_str());
     }
@@ -704,7 +674,7 @@ mod tests {
 
         assert!(cached.is_cached());
         assert!(!owned.is_cached());
-        
+
         assert_eq!(cached.as_str(), "C:\\Windows\\System32\\kernel32.dll");
         assert_eq!(owned.as_str(), "C:\\Custom\\unknown.dll");
     }
@@ -714,19 +684,22 @@ mod tests {
         // Test that case-insensitive keys hash consistently
         let key1 = CaseInsensitiveKey("C:\\Windows\\System32\\kernel32.dll");
         let key2 = CaseInsensitiveKey("c:\\windows\\system32\\kernel32.dll");
-        
+
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher1 = DefaultHasher::new();
         key1.hash(&mut hasher1);
         let hash1 = hasher1.finish();
-        
+
         let mut hasher2 = DefaultHasher::new();
         key2.hash(&mut hasher2);
         let hash2 = hasher2.finish();
-        
-        assert_eq!(hash1, hash2, "Case-insensitive keys should hash to the same value");
+
+        assert_eq!(
+            hash1, hash2,
+            "Case-insensitive keys should hash to the same value"
+        );
     }
 
     #[test]
@@ -747,15 +720,21 @@ mod tests {
         // This simulates paths coming from Windows APIs that might include null termination
         let path_with_null = "C:\\Windows\\System32\\kernel32.dll\0";
         let image_path = ImagePath::from_str(path_with_null);
-        
+
         // The null terminator should be stripped so we can match against cached entries
         // Cached entries don't have null terminators, so we must trim them for cache hits
         assert_eq!(image_path.as_str(), "C:\\Windows\\System32\\kernel32.dll");
-        assert!(!image_path.as_str().ends_with('\0'), "Null terminator should be stripped");
-        
+        assert!(
+            !image_path.as_str().ends_with('\0'),
+            "Null terminator should be stripped"
+        );
+
         // Test that it's cached (null terminator was stripped, allowing cache lookup)
-        assert!(image_path.is_cached(), "Should be cached after null terminator is stripped");
-        
+        assert!(
+            image_path.is_cached(),
+            "Should be cached after null terminator is stripped"
+        );
+
         // Test that the result matches the cached version
         let path_without_null = ImagePath::from_str("C:\\Windows\\System32\\kernel32.dll");
         assert_eq!(image_path, path_without_null);

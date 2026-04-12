@@ -2,13 +2,12 @@
 
 use windows::Win32::Foundation::{CloseHandle, ERROR_NO_MORE_FILES};
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
-    TH32CS_SNAPPROCESS,
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 
-use crate::error::{Error, ProcessError, ProcessOpenError, Result};
-use super::types::{ProcessId, ProcessInfo};
 use super::processes::Process;
+use super::types::{ProcessId, ProcessInfo};
+use crate::error::{Error, ProcessError, ProcessOpenError, Result};
 
 impl Process {
     /// List all processes in the system.
@@ -19,18 +18,18 @@ impl Process {
     }
 
     /// List all processes using a reusable output buffer.
-    /// 
+    ///
     /// Returns the number of processes found and added to the buffer.
     pub fn list_with_buffer(out_processes: &mut Vec<ProcessInfo>) -> Result<usize> {
         Self::list_with_filter_impl(out_processes, |_| true)
     }
 
     /// List all processes matching a filter using a reusable output buffer.
-    /// 
+    ///
     /// The filter function is called for each process. Only processes where the filter
     /// returns `true` are added to the buffer. This is more efficient than listing all
     /// and filtering afterwards as it avoids unnecessary buffer operations.
-    /// 
+    ///
     /// Returns the number of matching processes found and added to the buffer.
     pub fn list_with_filter<F>(out_processes: &mut Vec<ProcessInfo>, filter: F) -> Result<usize>
     where
@@ -47,12 +46,13 @@ impl Process {
         // Clear the output buffer for reuse
         out_processes.clear();
 
-        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
-            .map_err(|e| {
-                Error::Process(ProcessError::OpenFailed(
-                    ProcessOpenError::with_code(0, "Failed to create process snapshot", e.code().0)
-                ))
-            })?;
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.map_err(|e| {
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                0,
+                "Failed to create process snapshot",
+                e.code().0,
+            )))
+        })?;
 
         let mut entry = PROCESSENTRY32W {
             dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
@@ -62,7 +62,9 @@ impl Process {
         if unsafe { Process32FirstW(snapshot, &mut entry) }.is_ok() {
             loop {
                 // Extract process name
-                let name_end = entry.szExeFile.iter()
+                let name_end = entry
+                    .szExeFile
+                    .iter()
                     .position(|&c| c == 0)
                     .unwrap_or(entry.szExeFile.len());
                 let name = String::from_utf16_lossy(&entry.szExeFile[..name_end]);
@@ -94,7 +96,9 @@ impl Process {
             }
         }
 
-        unsafe { let _ = CloseHandle(snapshot); }
+        unsafe {
+            let _ = CloseHandle(snapshot);
+        }
         Ok(out_processes.len())
     }
 
@@ -102,7 +106,7 @@ impl Process {
     pub fn parent_id(&self) -> Result<Option<ProcessId>> {
         // We need to enumerate processes to find parent
         let processes = Self::list()?;
-        
+
         for proc in processes {
             if proc.pid == self.id() {
                 return Ok(proc.parent_pid);

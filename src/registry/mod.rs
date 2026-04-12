@@ -76,6 +76,7 @@ pub use types::{Access, Hive};
 pub use values::RegistryValue;
 
 use crate::Result;
+use crate::security::{ApplyMode, DescriptorEditResult, PermissionEditPlan, SecurityDescriptor};
 
 // Convenience functions for quick registry operations
 
@@ -149,4 +150,39 @@ pub fn read_multi_string(hive: Hive, path: &str, name: &str) -> Result<Vec<Strin
 pub fn write_multi_string(hive: Hive, path: &str, name: &str, value: &[String]) -> Result<()> {
     let key = RegistryKey::create(hive, path)?;
     key.set_value(name, value.to_vec())
+}
+
+/// Read a registry key security descriptor.
+pub fn read_security_descriptor(hive: Hive, path: &str) -> Result<SecurityDescriptor> {
+    let key = RegistryKey::open(hive, path)?;
+    key.security_descriptor()
+}
+
+/// Write a registry key security descriptor.
+pub fn write_security_descriptor(
+    hive: Hive,
+    path: &str,
+    descriptor: &SecurityDescriptor,
+) -> Result<()> {
+    let key = RegistryKey::builder()
+        .hive(hive)
+        .path(path)
+        .read_write()
+        .open()?;
+    key.set_security_descriptor(descriptor)
+}
+
+/// Apply a permission edit plan to a registry key.
+pub fn apply_permissions(
+    hive: Hive,
+    path: &str,
+    plan: &PermissionEditPlan,
+    mode: ApplyMode,
+) -> Result<DescriptorEditResult> {
+    let key = RegistryKey::builder()
+        .hive(hive)
+        .path(path)
+        .read_write()
+        .open()?;
+    key.apply_permissions(plan, mode)
 }

@@ -30,7 +30,7 @@
 //! # fn main() -> windows_erg::Result<()> {
 //! let process = Process::current();
 //! println!("Command line: {}", process.command_line()?);
-//! 
+//!
 //! let env = process.environment()?;
 //! for (key, value) in env {
 //!     println!("{} = {}", key, value);
@@ -89,18 +89,18 @@
 //! # }
 //! ```
 
-mod types;
-mod processes;
-mod peb;
 mod list;
-mod tree;
-mod threads;
-mod modules;
 mod memory;
+mod modules;
+mod peb;
+mod processes;
+mod threads;
+mod tree;
+mod types;
 
 // Re-export public types
-pub use types::{
-    ProcessId, ThreadId, ProcessAccess, ProcessInfo, ThreadInfo, ModuleInfo,
-    ProcessParameters, MemoryInfo,
-};
 pub use processes::Process;
+pub use types::{
+    MemoryInfo, ModuleInfo, ProcessAccess, ProcessId, ProcessInfo, ProcessParameters, ThreadId,
+    ThreadInfo,
+};

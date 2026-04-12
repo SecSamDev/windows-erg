@@ -21,25 +21,45 @@
 //! # Ok::<(), windows_erg::Error>(())
 //! ```
 //!
+//! ## Raw File Example
+//!
+//! ```no_run
+//! use windows_erg::file;
+//!
+//! // Requires administrator privileges in most environments.
+//! file::raw_copy(
+//!     r"C:\\Windows\\System32\\drivers\\etc\\hosts",
+//!     r"C:\\Temp\\hosts.copy"
+//! )?;
+//! # Ok::<(), windows_erg::Error>(())
+//! ```
+//!
 //! ## Modules
 //!
 //! - [`process`] - Process management (list, info, kill, spawn)
 //! - [`registry`] - Registry operations
-//! - [`thread`] - Thread management
-//! - [`evt`] - Windows Event Log
-//! - [`etw`] - Event Tracing for Windows
-//! - [`proxy`] - Network proxy configuration
-//! - [`mitigation`] - Process security mitigations
+//! - [`evt`] - Windows Event Log querying and reading
+//! - [`etw`] - Event Tracing for Windows (ETW)
 //! - [`file`] - Raw file operations
+//! - [`pipes`] - Windows named and anonymous pipe API (in progress)
 
 #![warn(missing_docs)]
 #![cfg(windows)]
 
-pub mod registry;
-pub mod process;
 pub mod error;
+pub mod etw;
+pub mod evt;
+pub mod file;
+pub mod mitigation;
+pub mod pipes;
+pub mod process;
+pub mod proxy;
+pub mod registry;
+pub mod security;
+pub mod types;
 
 pub use error::{Error, Result};
+pub use types::{ProcessId, ThreadId};
 
 /// Check if the current process is running with elevated (administrator) privileges.
 ///
@@ -58,7 +78,7 @@ pub use error::{Error, Result};
 pub fn is_elevated() -> Result<bool> {
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Security::{
-        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 

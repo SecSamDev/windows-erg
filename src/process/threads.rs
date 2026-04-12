@@ -2,13 +2,12 @@
 
 use windows::Win32::Foundation::{CloseHandle, ERROR_NO_MORE_FILES};
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32,
-    TH32CS_SNAPTHREAD,
+    CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
 
-use crate::error::{Error, ProcessError, ProcessOpenError, Result};
-use super::types::{ProcessId, ThreadId, ThreadInfo};
 use super::processes::Process;
+use super::types::{ProcessId, ThreadId, ThreadInfo};
+use crate::error::{Error, ProcessError, ProcessOpenError, Result};
 
 impl Process {
     /// Enumerate all threads in this process.
@@ -30,18 +29,23 @@ impl Process {
     /// and filtering afterwards.
     ///
     /// Returns the number of matching threads found and added to the buffer.
-    pub fn threads_with_filter<F>(&self, out_threads: &mut Vec<ThreadInfo>, filter: F) -> Result<usize>
+    pub fn threads_with_filter<F>(
+        &self,
+        out_threads: &mut Vec<ThreadInfo>,
+        filter: F,
+    ) -> Result<usize>
     where
         F: Fn(&ThreadInfo) -> bool,
     {
         out_threads.clear();
-        
-        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }
-            .map_err(|e| {
-                Error::Process(ProcessError::OpenFailed(
-                    ProcessOpenError::with_code(self.id().as_u32(), "Failed to create thread snapshot", e.code().0)
-                ))
-            })?;
+
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) }.map_err(|e| {
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.id().as_u32(),
+                "Failed to create thread snapshot",
+                e.code().0,
+            )))
+        })?;
 
         let mut entry = THREADENTRY32 {
             dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
@@ -74,7 +78,9 @@ impl Process {
             }
         }
 
-        unsafe { let _ = CloseHandle(snapshot); }
+        unsafe {
+            let _ = CloseHandle(snapshot);
+        }
         Ok(out_threads.len())
     }
 }

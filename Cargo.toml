@@ -24,7 +24,10 @@ windows = { version = "0.58", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Registry",
     "Win32_System_Kernel",
+    "Win32_System_Pipes",
     "Win32_System_SystemServices",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
     
     # WDK - Kernel mode APIs
     "Wdk_System_Threading",
@@ -36,6 +39,7 @@ windows = { version = "0.58", features = [
     # Event Log & ETW
     "Win32_System_EventLog",
     "Win32_System_Diagnostics_Etw",
+    "Win32_System_Time",
     
     # File System
     "Win32_Storage_FileSystem",
@@ -52,23 +56,17 @@ windows = { version = "0.58", features = [
     "Win32_System_Com",
 ] }
 
-# Error handling
-thiserror = "1.0"
-anyhow = "1.0"
-
-# Utilities
-bitflags = "2.4"
+# XML parsing for Event Log
+quick-xml = { version = "0.39", features = ["serialize"] }
 
 [dev-dependencies]
-# Testing
-tokio = { version = "1.35", features = ["full"] }
 tempfile = "3.8"
 
 [features]
 default = []
 
 
-# Serialization support
+# Serialization support (extends quick-xml with struct mapping)
 serde = ["dep:serde"]
 
 # All features
@@ -124,3 +122,11 @@ path = "examples/process_tree.rs"
 [[example]]
 name = "registry_operations"
 path = "examples/registry_operations.rs"
+
+[[example]]
+name = "process_mitigation"
+path = "examples/process_mitigation.rs"
+
+[[example]]
+name = "raw_file_copy"
+path = "examples/raw_file_copy.rs"

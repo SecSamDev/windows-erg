@@ -2,9 +2,9 @@
 
 use super::key::RegistryKey;
 use crate::{Error, Result};
-use windows::core::HSTRING;
 use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
 use windows::Win32::System::Registry::*;
+use windows::core::HSTRING;
 
 /// Trait for types that can be read from and written to the registry.
 pub trait RegistryValue: Sized {
@@ -35,10 +35,12 @@ impl RegistryValue for String {
             if result.is_err() {
                 if result == ERROR_FILE_NOT_FOUND {
                     return Err(Error::Registry(crate::error::RegistryError::ValueNotFound(
-                        crate::error::RegistryValueNotFoundError::new(name.to_string())
+                        crate::error::RegistryValueNotFoundError::new(name.to_string()),
                     )));
                 }
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
 
             if typ != REG_SZ && typ != REG_EXPAND_SZ {
@@ -46,8 +48,8 @@ impl RegistryValue for String {
                     crate::error::RegistryInvalidTypeError::with_name(
                         "String (REG_SZ or REG_EXPAND_SZ)",
                         format!("REG type {}", typ.0),
-                        name.to_string()
-                    )
+                        name.to_string(),
+                    ),
                 )));
             }
 
@@ -73,9 +75,11 @@ impl RegistryValue for String {
                     (bytes.len() + 1) * 2,
                 )),
             );
-            
+
             if result.is_err() {
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
         }
 
@@ -117,10 +121,12 @@ impl RegistryValue for u32 {
             if result.is_err() {
                 if result == ERROR_FILE_NOT_FOUND {
                     return Err(Error::Registry(crate::error::RegistryError::ValueNotFound(
-                        crate::error::RegistryValueNotFoundError::new(name.to_string())
+                        crate::error::RegistryValueNotFoundError::new(name.to_string()),
                     )));
                 }
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
 
             if typ != REG_DWORD {
@@ -128,8 +134,8 @@ impl RegistryValue for u32 {
                     crate::error::RegistryInvalidTypeError::with_name(
                         "u32 (REG_DWORD)",
                         format!("REG type {}", typ.0),
-                        name.to_string()
-                    )
+                        name.to_string(),
+                    ),
                 )));
             }
 
@@ -151,9 +157,11 @@ impl RegistryValue for u32 {
                     std::mem::size_of::<u32>(),
                 )),
             );
-            
+
             if result.is_err() {
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
         }
 
@@ -181,10 +189,12 @@ impl RegistryValue for u64 {
             if result.is_err() {
                 if result == ERROR_FILE_NOT_FOUND {
                     return Err(Error::Registry(crate::error::RegistryError::ValueNotFound(
-                        crate::error::RegistryValueNotFoundError::new(name.to_string())
+                        crate::error::RegistryValueNotFoundError::new(name.to_string()),
                     )));
                 }
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
 
             if typ != REG_QWORD {
@@ -192,8 +202,8 @@ impl RegistryValue for u64 {
                     crate::error::RegistryInvalidTypeError::with_name(
                         "u64 (REG_QWORD)",
                         format!("REG type {}", typ.0),
-                        name.to_string()
-                    )
+                        name.to_string(),
+                    ),
                 )));
             }
 
@@ -215,9 +225,11 @@ impl RegistryValue for u64 {
                     std::mem::size_of::<u64>(),
                 )),
             );
-            
+
             if result.is_err() {
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
         }
 
@@ -257,10 +269,12 @@ impl RegistryValue for Vec<u8> {
             if result.is_err() {
                 if result == ERROR_FILE_NOT_FOUND {
                     return Err(Error::Registry(crate::error::RegistryError::ValueNotFound(
-                        crate::error::RegistryValueNotFoundError::new(name.to_string())
+                        crate::error::RegistryValueNotFoundError::new(name.to_string()),
                     )));
                 }
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
 
             if typ != REG_BINARY {
@@ -268,8 +282,8 @@ impl RegistryValue for Vec<u8> {
                     crate::error::RegistryInvalidTypeError::with_name(
                         "Vec<u8> (REG_BINARY)",
                         format!("REG type {}", typ.0),
-                        name.to_string()
-                    )
+                        name.to_string(),
+                    ),
                 )));
             }
 
@@ -282,16 +296,12 @@ impl RegistryValue for Vec<u8> {
         let name_wide = HSTRING::from(name);
 
         unsafe {
-            let result = RegSetValueExW(
-                key.handle,
-                &name_wide,
-                0,
-                REG_BINARY,
-                Some(&self),
-            );
-            
+            let result = RegSetValueExW(key.handle, &name_wide, 0, REG_BINARY, Some(&self));
+
             if result.is_err() {
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
         }
 
@@ -319,10 +329,12 @@ impl RegistryValue for Vec<String> {
             if result.is_err() {
                 if result == ERROR_FILE_NOT_FOUND {
                     return Err(Error::Registry(crate::error::RegistryError::ValueNotFound(
-                        crate::error::RegistryValueNotFoundError::new(name.to_string())
+                        crate::error::RegistryValueNotFoundError::new(name.to_string()),
                     )));
                 }
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
 
             if typ != REG_MULTI_SZ {
@@ -330,15 +342,15 @@ impl RegistryValue for Vec<String> {
                     crate::error::RegistryInvalidTypeError::with_name(
                         "Vec<String> (REG_MULTI_SZ)",
                         format!("REG type {}", typ.0),
-                        name.to_string()
-                    )
+                        name.to_string(),
+                    ),
                 )));
             }
 
             // Parse multi-string (double-null terminated strings)
             let mut strings = Vec::new();
             let mut start = 0;
-            
+
             for i in 0..(len as usize / 2) {
                 if buf[i] == 0 {
                     if i > start {
@@ -346,7 +358,7 @@ impl RegistryValue for Vec<String> {
                         strings.push(s);
                     }
                     start = i + 1;
-                    
+
                     // Double null terminator
                     if i + 1 < buf.len() && buf[i + 1] == 0 {
                         break;
@@ -381,9 +393,11 @@ impl RegistryValue for Vec<String> {
                     buffer.len() * 2,
                 )),
             );
-            
+
             if result.is_err() {
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
         }
 

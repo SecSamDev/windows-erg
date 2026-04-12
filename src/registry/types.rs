@@ -27,6 +27,16 @@ impl Hive {
             Hive::CurrentConfig => HKEY_CURRENT_CONFIG,
         }
     }
+
+    pub(crate) fn as_short_name(&self) -> &'static str {
+        match self {
+            Hive::ClassesRoot => "HKCR",
+            Hive::CurrentUser => "HKCU",
+            Hive::LocalMachine => "HKLM",
+            Hive::Users => "HKU",
+            Hive::CurrentConfig => "HKCC",
+        }
+    }
 }
 
 /// Access rights for registry keys.

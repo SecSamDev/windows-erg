@@ -57,15 +57,15 @@ fn main() -> windows_erg::Result<()> {
 
     // Pattern 5: Type-safe value access with error handling
     println!("\nPattern 5: Type-safe access with proper error handling");
-    
+
     key.set_value("StringValue", "text".to_string())?;
-    
+
     // Correct type
     match key.get_value::<String>("StringValue") {
         Ok(s) => println!("  ✓ String value: {}", s),
         Err(e) => println!("  Error: {}", e),
     }
-    
+
     // Wrong type (will error gracefully)
     match key.get_value::<u32>("StringValue") {
         Ok(n) => println!("  Number: {}", n),
@@ -77,7 +77,7 @@ fn main() -> windows_erg::Result<()> {
     match RegistryKey::builder()
         .hive(Hive::CurrentUser)
         .path(test_path)
-        .read()  // Read-only access
+        .read() // Read-only access
         .open()
     {
         Ok(readonly_key) => {
@@ -90,6 +90,6 @@ fn main() -> windows_erg::Result<()> {
     }
 
     println!("\n✓ All safe access patterns demonstrated!");
-    
+
     Ok(())
 }

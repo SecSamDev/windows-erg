@@ -2,13 +2,12 @@
 
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::System::ProcessStatus::{
-    EnumProcessModules, GetModuleBaseNameW, GetModuleFileNameExW, GetModuleInformation,
-    MODULEINFO,
+    EnumProcessModules, GetModuleBaseNameW, GetModuleFileNameExW, GetModuleInformation, MODULEINFO,
 };
 
-use crate::error::{Error, ProcessError, ProcessOpenError, Result};
-use super::types::{ModuleInfo, ImagePath};
 use super::processes::Process;
+use super::types::{ImagePath, ModuleInfo};
+use crate::error::{Error, ProcessError, ProcessOpenError, Result};
 
 impl Process {
     /// Enumerate all modules (DLLs) loaded in this process.
@@ -20,11 +19,15 @@ impl Process {
     }
 
     /// Enumerate modules using reusable output and work buffers.
-    /// 
+    ///
     /// # Arguments
     /// - `out_modules`: Output buffer to store ModuleInfo results
     /// - `work_buffer`: Work buffer for module handles and string data (reused across calls)
-    pub fn modules_with_buffer(&self, out_modules: &mut Vec<ModuleInfo>, work_buffer: &mut Vec<u8>) -> Result<usize> {
+    pub fn modules_with_buffer(
+        &self,
+        out_modules: &mut Vec<ModuleInfo>,
+        work_buffer: &mut Vec<u8>,
+    ) -> Result<usize> {
         self.modules_with_filter_impl(out_modules, work_buffer, |_| true)
     }
 
@@ -40,7 +43,12 @@ impl Process {
     /// - `filter`: Predicate function to filter modules
     ///
     /// Returns the number of matching modules found and added to the buffer.
-    pub fn modules_with_filter<F>(&self, out_modules: &mut Vec<ModuleInfo>, work_buffer: &mut Vec<u8>, filter: F) -> Result<usize>
+    pub fn modules_with_filter<F>(
+        &self,
+        out_modules: &mut Vec<ModuleInfo>,
+        work_buffer: &mut Vec<u8>,
+        filter: F,
+    ) -> Result<usize>
     where
         F: Fn(&ModuleInfo) -> bool,
     {
@@ -58,15 +66,17 @@ impl Process {
         F: Fn(&ModuleInfo) -> bool,
     {
         out_modules.clear();
-        
+
         // Ensure work buffer is large enough for module handles (8KB)
         if work_buffer.capacity() < 8192 {
             work_buffer.reserve(8192 - work_buffer.capacity());
         }
-        unsafe { work_buffer.set_len(8192); }
+        unsafe {
+            work_buffer.set_len(8192);
+        }
 
         let mut bytes_needed = 0u32;
-        
+
         // First call to get size
         unsafe {
             EnumProcessModules(
@@ -77,9 +87,11 @@ impl Process {
             )
         }
         .map_err(|e| {
-            Error::Process(ProcessError::OpenFailed(
-                ProcessOpenError::with_code(self.id().as_u32(), "Failed to enumerate modules (first call)", e.code().0)
-            ))
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.id().as_u32(),
+                "Failed to enumerate modules (first call)",
+                e.code().0,
+            )))
         })?;
 
         // Resize if needed
@@ -88,7 +100,9 @@ impl Process {
             if work_buffer.capacity() < bytes_needed as usize {
                 work_buffer.reserve(bytes_needed as usize - work_buffer.capacity());
             }
-            unsafe { work_buffer.set_len(bytes_needed as usize); }
+            unsafe {
+                work_buffer.set_len(bytes_needed as usize);
+            }
         }
 
         // Second call with correct size
@@ -101,17 +115,16 @@ impl Process {
             )
         }
         .map_err(|e| {
-            Error::Process(ProcessError::OpenFailed(
-                ProcessOpenError::with_code(self.id().as_u32(), "Failed to enumerate modules (second call)", e.code().0)
-            ))
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.id().as_u32(),
+                "Failed to enumerate modules (second call)",
+                e.code().0,
+            )))
         })?;
 
         let module_count = bytes_needed as usize / std::mem::size_of::<HMODULE>();
         let module_handles = unsafe {
-            std::slice::from_raw_parts(
-                work_buffer.as_ptr() as *const HMODULE,
-                module_count,
-            )
+            std::slice::from_raw_parts(work_buffer.as_ptr() as *const HMODULE, module_count)
         };
 
         // Reuse work buffer for string data starting after module handles
@@ -122,24 +135,22 @@ impl Process {
             if work_buffer.capacity() < needed {
                 work_buffer.reserve(needed - work_buffer.capacity());
             }
-            unsafe { work_buffer.set_len(needed); }
+            unsafe {
+                work_buffer.set_len(needed);
+            }
         }
-        
-        let string_buffer_ptr = unsafe { work_buffer.as_mut_ptr().add(string_buffer_start) as *mut u16 };
+
+        let string_buffer_ptr =
+            unsafe { work_buffer.as_mut_ptr().add(string_buffer_start) as *mut u16 };
         let string_buffer_len = (work_buffer.len() - string_buffer_start) / 2;
-        let string_buffer_slice = unsafe {
-            std::slice::from_raw_parts_mut(string_buffer_ptr, string_buffer_len)
-        };
+        let string_buffer_slice =
+            unsafe { std::slice::from_raw_parts_mut(string_buffer_ptr, string_buffer_len) };
 
         for &hmodule in module_handles {
             // Get module name
-            let name_len = unsafe {
-                GetModuleBaseNameW(
-                    self.as_raw_handle(),
-                    hmodule,
-                    string_buffer_slice,
-                )
-            } as usize;
+            let name_len =
+                unsafe { GetModuleBaseNameW(self.as_raw_handle(), hmodule, string_buffer_slice) }
+                    as usize;
 
             let name = if name_len > 0 {
                 String::from_utf16_lossy(&string_buffer_slice[..name_len])
@@ -148,13 +159,9 @@ impl Process {
             };
 
             // Get full path (reuse same buffer)
-            let path_len = unsafe {
-                GetModuleFileNameExW(
-                    self.as_raw_handle(),
-                    hmodule,
-                    string_buffer_slice,
-                )
-            } as usize;
+            let path_len =
+                unsafe { GetModuleFileNameExW(self.as_raw_handle(), hmodule, string_buffer_slice) }
+                    as usize;
 
             let path = if path_len > 0 {
                 // Use from_utf16 for efficient cache lookup without intermediate String

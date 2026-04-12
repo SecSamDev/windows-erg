@@ -2,13 +2,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::error::Result;
-use super::types::{ProcessId, ProcessInfo};
 use super::processes::Process;
+use super::types::{ProcessId, ProcessInfo};
+use crate::error::Result;
 
 impl Process {
     /// Kill this process and all its descendants.
-    /// 
+    ///
     /// This will recursively kill all child processes first, then the parent.
     pub fn kill_tree(&self) -> Result<()> {
         Self::kill_tree_by_id(self.id())
@@ -21,10 +21,13 @@ impl Process {
     }
 
     /// Kill a process tree using a reusable output buffer.
-    pub fn kill_tree_by_id_with_buffer(pid: ProcessId, out_processes: &mut Vec<ProcessInfo>) -> Result<()> {
+    pub fn kill_tree_by_id_with_buffer(
+        pid: ProcessId,
+        out_processes: &mut Vec<ProcessInfo>,
+    ) -> Result<()> {
         Self::list_with_buffer(out_processes)?;
         let tree = build_process_tree(out_processes);
-        
+
         // Collect all descendants
         let mut to_kill = HashSet::new();
         collect_descendants(pid, &tree, &mut to_kill);
@@ -43,7 +46,7 @@ impl Process {
     }
 
     /// Find the root ancestor of a process and kill the entire tree.
-    /// 
+    ///
     /// This walks up the parent chain to find the topmost process,
     /// then kills that entire tree.
     pub fn kill_tree_from_root(pid: ProcessId) -> Result<()> {
@@ -52,13 +55,16 @@ impl Process {
     }
 
     /// Kill tree from root using a reusable output buffer.
-    pub fn kill_tree_from_root_with_buffer(pid: ProcessId, out_processes: &mut Vec<ProcessInfo>) -> Result<()> {
+    pub fn kill_tree_from_root_with_buffer(
+        pid: ProcessId,
+        out_processes: &mut Vec<ProcessInfo>,
+    ) -> Result<()> {
         Self::list_with_buffer(out_processes)?;
         let tree = build_process_tree(out_processes);
-        
+
         // Find root ancestor
         let root = find_root_ancestor(pid, &tree);
-        
+
         // Kill entire tree from root
         Self::kill_tree_by_id_with_buffer(root, out_processes)
     }
@@ -67,15 +73,13 @@ impl Process {
 /// Build a parent->children mapping.
 fn build_process_tree(processes: &[ProcessInfo]) -> HashMap<ProcessId, Vec<ProcessId>> {
     let mut tree: HashMap<ProcessId, Vec<ProcessId>> = HashMap::new();
-    
+
     for proc in processes {
         if let Some(parent_pid) = proc.parent_pid {
-            tree.entry(parent_pid)
-                .or_default()
-                .push(proc.pid);
+            tree.entry(parent_pid).or_default().push(proc.pid);
         }
     }
-    
+
     tree
 }
 
@@ -97,7 +101,8 @@ fn collect_descendants(
 /// Calculate depth of a process in the tree (for kill ordering).
 fn tree_depth(pid: ProcessId, tree: &HashMap<ProcessId, Vec<ProcessId>>) -> usize {
     if let Some(children) = tree.get(&pid) {
-        1 + children.iter()
+        1 + children
+            .iter()
             .map(|&child| tree_depth(child, tree))
             .max()
             .unwrap_or(0)
@@ -118,7 +123,7 @@ fn find_root_ancestor(
             child_to_parent.insert(child, parent);
         }
     }
-    
+
     // Walk up to root
     let mut visited = HashSet::new();
     while let Some(&parent) = child_to_parent.get(&pid) {
@@ -128,6 +133,6 @@ fn find_root_ancestor(
         }
         pid = parent;
     }
-    
+
     pid
 }

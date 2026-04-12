@@ -1,11 +1,11 @@
 //! Registry key builder for advanced opening options.
 
-use super::types::{Access, Hive, Wow64View};
 use super::key::RegistryKey;
+use super::types::{Access, Hive, Wow64View};
 use crate::{Error, Result};
-use windows::core::HSTRING;
 use windows::Win32::Foundation::ERROR_FILE_NOT_FOUND;
 use windows::Win32::System::Registry::*;
+use windows::core::HSTRING;
 
 /// Builder for opening registry keys with specific options.
 pub struct RegistryKeyBuilder {
@@ -73,13 +73,13 @@ impl RegistryKeyBuilder {
         let hive = self.hive.ok_or_else(|| {
             Error::InvalidParameter(crate::error::InvalidParameterError::new(
                 "hive",
-                "Registry hive must be specified"
+                "Registry hive must be specified",
             ))
         })?;
         let path = self.path.ok_or_else(|| {
             Error::InvalidParameter(crate::error::InvalidParameterError::new(
                 "path",
-                "Registry path must be specified"
+                "Registry path must be specified",
             ))
         })?;
 
@@ -103,17 +103,21 @@ impl RegistryKeyBuilder {
             if result.is_err() {
                 if result == ERROR_FILE_NOT_FOUND {
                     return Err(Error::Registry(crate::error::RegistryError::KeyNotFound(
-                        crate::error::RegistryKeyNotFoundError::new(path)
+                        crate::error::RegistryKeyNotFoundError::new(path),
                     )));
                 }
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::with_context(
-                    result.into(),
-                    "RegOpenKeyExW"
-                )));
+                return Err(Error::WindowsApi(
+                    crate::error::WindowsApiError::with_context(result.into(), "RegOpenKeyExW"),
+                ));
             }
         }
 
-        Ok(RegistryKey::from_handle(handle, true))
+        Ok(RegistryKey::from_handle_with_metadata(
+            handle,
+            true,
+            Some(hive),
+            Some(path),
+        ))
     }
 }
 

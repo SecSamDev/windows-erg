@@ -58,28 +58,28 @@ fn main() -> windows_erg::Result<()> {
     println!("\n\nCreating test key with subkeys:");
     let test_path = r"Software\WindowsErg_Enumerate";
     let key = RegistryKey::create(Hive::CurrentUser, test_path)?;
-    
+
     // Create some subkeys
     RegistryKey::create(Hive::CurrentUser, &format!("{}\\Config", test_path))?;
     RegistryKey::create(Hive::CurrentUser, &format!("{}\\Data", test_path))?;
     RegistryKey::create(Hive::CurrentUser, &format!("{}\\Logs", test_path))?;
-    
+
     // Add some values
     key.set_value("Value1", "First".to_string())?;
     key.set_value("Value2", 42u32)?;
     key.set_value("Value3", true)?;
-    
+
     println!("\nSubkeys:");
     for subkey in key.subkeys()? {
         println!("  • {}", subkey);
     }
-    
+
     println!("\nValues:");
     for value_name in key.value_names()? {
         println!("  • {}", value_name);
     }
 
     println!("\n✓ Enumeration complete!");
-    
+
     Ok(())
 }

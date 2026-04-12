@@ -17,15 +17,15 @@ fn main() -> windows_erg::Result<()> {
 
     // Read various system information
     println!("System Information:");
-    
+
     if let Ok(product_name) = key.get_value::<String>("ProductName") {
         println!("  Product Name: {}", product_name);
     }
-    
+
     if let Ok(build) = key.get_value::<String>("CurrentBuild") {
         println!("  Build Number: {}", build);
     }
-    
+
     if let Ok(edition) = key.get_value::<String>("EditionID") {
         println!("  Edition: {}", edition);
     }
@@ -36,6 +36,6 @@ fn main() -> windows_erg::Result<()> {
     }
 
     println!("\n✓ Successfully read system registry values");
-    
+
     Ok(())
 }

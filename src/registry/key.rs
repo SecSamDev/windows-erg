@@ -3,21 +3,37 @@
 use super::builder::RegistryKeyBuilder;
 use super::types::Hive;
 use super::values::RegistryValue;
+use crate::error::{Error as CrateError, SecurityError, SecurityUnsupportedError};
+use crate::security::{
+    ApplyMode, DescriptorEditResult, PermissionEditPlan, PermissionTarget, SecurityDescriptor,
+};
 use crate::{Error, Result};
-use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_NO_MORE_ITEMS};
 use windows::Win32::System::Registry::*;
+use windows::core::{HSTRING, PCWSTR};
 
 /// A Windows Registry key with automatic handle management.
 pub struct RegistryKey {
     pub(crate) handle: HKEY,
     close_on_drop: bool,
+    hive: Option<Hive>,
+    subkey: Option<String>,
 }
 
 impl RegistryKey {
-    /// Create from an existing handle (internal use).
-    pub(crate) fn from_handle(handle: HKEY, close_on_drop: bool) -> Self {
-        RegistryKey { handle, close_on_drop }
+    /// Create from an existing handle with optional key metadata.
+    pub(crate) fn from_handle_with_metadata(
+        handle: HKEY,
+        close_on_drop: bool,
+        hive: Option<Hive>,
+        subkey: Option<String>,
+    ) -> Self {
+        RegistryKey {
+            handle,
+            close_on_drop,
+            hive,
+            subkey,
+        }
     }
 
     /// Create a builder for opening a registry key with specific options.
@@ -56,27 +72,25 @@ impl RegistryKey {
         let mut handle = HKEY::default();
 
         unsafe {
-            let result = RegOpenKeyExW(
-                hive.as_hkey(),
-                &subkey_wide,
-                0,
-                KEY_READ,
-                &mut handle,
-            );
+            let result = RegOpenKeyExW(hive.as_hkey(), &subkey_wide, 0, KEY_READ, &mut handle);
 
             if result.is_err() {
                 if result == ERROR_FILE_NOT_FOUND {
                     return Err(Error::Registry(crate::error::RegistryError::KeyNotFound(
-                        crate::error::RegistryKeyNotFoundError::new(subkey.to_string())
+                        crate::error::RegistryKeyNotFoundError::new(subkey.to_string()),
                     )));
                 }
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
         }
 
         Ok(RegistryKey {
             handle,
             close_on_drop: true,
+            hive: Some(hive),
+            subkey: Some(subkey.to_string()),
         })
     }
 
@@ -109,17 +123,68 @@ impl RegistryKey {
             );
 
             if result.is_err() {
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::with_context(
-                    result.into(),
-                    "RegCreateKeyExW"
-                )));
+                return Err(Error::WindowsApi(
+                    crate::error::WindowsApiError::with_context(result.into(), "RegCreateKeyExW"),
+                ));
             }
         }
 
         Ok(RegistryKey {
             handle,
             close_on_drop: true,
+            hive: Some(hive),
+            subkey: Some(subkey.to_string()),
         })
+    }
+
+    /// Read this key's security descriptor through the security module.
+    pub fn security_descriptor(&self) -> Result<SecurityDescriptor> {
+        let target = self.security_target()?;
+        target.read_descriptor()
+    }
+
+    /// Write a security descriptor to this key through the security module.
+    pub fn set_security_descriptor(&self, descriptor: &SecurityDescriptor) -> Result<()> {
+        let target = self.security_target()?;
+        target.write_descriptor(descriptor)
+    }
+
+    /// Execute a planned permission edit against this key.
+    pub fn apply_permissions(
+        &self,
+        plan: &PermissionEditPlan,
+        mode: ApplyMode,
+    ) -> Result<DescriptorEditResult> {
+        let target = self.security_target()?;
+        plan.execute_against_target(&target, mode)
+    }
+
+    fn security_target(&self) -> Result<PermissionTarget> {
+        let hive = self.hive.ok_or_else(|| {
+            CrateError::Security(SecurityError::Unsupported(
+                SecurityUnsupportedError::with_reason(
+                    "registry_key".to_string(),
+                    "security_target".to_string(),
+                    "registry key metadata is unavailable for this handle",
+                ),
+            ))
+        })?;
+
+        let path = match &self.subkey {
+            Some(subkey) if subkey.is_empty() => hive.as_short_name().to_string(),
+            Some(subkey) => format!("{}\\{}", hive.as_short_name(), subkey),
+            None => {
+                return Err(CrateError::Security(SecurityError::Unsupported(
+                    SecurityUnsupportedError::with_reason(
+                        "registry_key".to_string(),
+                        "security_target".to_string(),
+                        "registry key path metadata is unavailable",
+                    ),
+                )));
+            }
+        };
+
+        Ok(PermissionTarget::registry(path))
     }
 
     /// Get a typed value from the registry key.
@@ -157,7 +222,9 @@ impl RegistryKey {
         unsafe {
             let result = RegDeleteValueW(self.handle, &name_wide);
             if result.is_err() {
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
         }
         Ok(())
@@ -180,21 +247,17 @@ impl RegistryKey {
         let mut typ = REG_NONE;
 
         unsafe {
-            let result = RegQueryValueExW(
-                self.handle,
-                &name_wide,
-                None,
-                Some(&mut typ),
-                None,
-                None,
-            );
+            let result =
+                RegQueryValueExW(self.handle, &name_wide, None, Some(&mut typ), None, None);
 
             if result == ERROR_FILE_NOT_FOUND {
                 return Ok(false);
             }
 
             if result.is_err() {
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
 
             Ok(true)
@@ -240,7 +303,9 @@ impl RegistryKey {
         unsafe {
             let result = RegDeleteKeyW(hive.as_hkey(), &subkey_wide);
             if result.is_err() {
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
         }
         Ok(())
@@ -252,7 +317,9 @@ impl RegistryKey {
         unsafe {
             let result = RegDeleteTreeW(hive.as_hkey(), &subkey_wide);
             if result.is_err() {
-                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                    result.into(),
+                )));
             }
         }
         Ok(())
@@ -284,7 +351,9 @@ impl RegistryKey {
                 }
 
                 if result.is_err() {
-                    return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                    return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                        result.into(),
+                    )));
                 }
 
                 name_buf.truncate(name_len as usize);
@@ -323,7 +392,9 @@ impl RegistryKey {
                 }
 
                 if result.is_err() {
-                    return Err(Error::WindowsApi(crate::error::WindowsApiError::new(result.into())));
+                    return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
+                        result.into(),
+                    )));
                 }
 
                 name_buf.truncate(name_len as usize);

@@ -18,7 +18,10 @@ fn main() -> windows_erg::Result<()> {
             "{}. PID: {:5} | PPID: {:5} | Threads: {:3} | Name: {}",
             i + 1,
             proc_info.pid,
-            proc_info.parent_pid.map(|p| format!("{}", p)).unwrap_or_else(|| "N/A".to_string()),
+            proc_info
+                .parent_pid
+                .map(|p| format!("{}", p))
+                .unwrap_or_else(|| "N/A".to_string()),
             proc_info.thread_count,
             proc_info.name
         );
@@ -31,7 +34,7 @@ fn main() -> windows_erg::Result<()> {
     println!("Current PID: {}", current.id());
     println!("Process name: {}", current.name()?);
     println!("Process path: {}", current.path()?.display());
-    
+
     // Read PEB data
     println!("\nReading PEB data...");
     match current.command_line() {
@@ -52,7 +55,10 @@ fn main() -> windows_erg::Result<()> {
         Ok(mem) => {
             println!("\nMemory Information:");
             println!("  Working set: {} MB", mem.working_set / 1024 / 1024);
-            println!("  Peak working set: {} MB", mem.peak_working_set / 1024 / 1024);
+            println!(
+                "  Peak working set: {} MB",
+                mem.peak_working_set / 1024 / 1024
+            );
             println!("  Page faults: {}", mem.page_fault_count);
         }
         Err(e) => println!("\nCould not read memory info: {}", e),
@@ -63,7 +69,12 @@ fn main() -> windows_erg::Result<()> {
         Ok(threads) => {
             println!("\nThreads: {} total", threads.len());
             for (i, thread) in threads.iter().take(5).enumerate() {
-                println!("  {}. TID: {} | Priority: {}", i + 1, thread.tid, thread.base_priority);
+                println!(
+                    "  {}. TID: {} | Priority: {}",
+                    i + 1,
+                    thread.tid,
+                    thread.base_priority
+                );
             }
         }
         Err(e) => println!("\nCould not enumerate threads: {}", e),
@@ -74,11 +85,7 @@ fn main() -> windows_erg::Result<()> {
         Ok(modules) => {
             println!("\nLoaded modules: {} total", modules.len());
             for (i, module) in modules.iter().take(5).enumerate() {
-                println!("  {}. {} ({} KB)",
-                    i + 1,
-                    module.name,
-                    module.size / 1024
-                );
+                println!("  {}. {} ({} KB)", i + 1, module.name, module.size / 1024);
             }
         }
         Err(e) => println!("\nCould not enumerate modules: {}", e),
