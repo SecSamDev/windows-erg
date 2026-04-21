@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::io;
 
@@ -7,13 +9,14 @@ use windows::Win32::Storage::FileSystem::{
     ReadFile, WriteFile,
 };
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, NAMED_PIPE_MODE, PIPE_READMODE_BYTE,
-    PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_TYPE_MESSAGE,
-    PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
+    NAMED_PIPE_MODE, PIPE_READMODE_BYTE, PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS,
+    PIPE_TYPE_BYTE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 use windows::core::PCWSTR;
 
-use crate::error::InvalidParameterError;
+use crate::error::{AccessDeniedError, InvalidParameterError};
+use crate::process::{Process, ProcessId};
 use crate::{Error, Result};
 
 use super::error_map::map_pipe_windows_error;
@@ -33,6 +36,7 @@ pub struct NamedPipeServerBuilder {
     in_buffer_size: u32,
     default_timeout: Duration,
     security: PipeSecurityOptions,
+    allowed_executables: Vec<PathBuf>,
 }
 
 impl NamedPipeServerBuilder {
@@ -47,6 +51,7 @@ impl NamedPipeServerBuilder {
             in_buffer_size: 4096,
             default_timeout: Duration::from_secs(5),
             security: PipeSecurityOptions::default(),
+            allowed_executables: Vec::new(),
         }
     }
 
@@ -98,6 +103,28 @@ impl NamedPipeServerBuilder {
         self
     }
 
+    /// Restrict connections to processes whose executable path matches one of the given paths.
+    ///
+    /// The comparison is case-insensitive. If no paths are added (the default), all processes
+    /// are allowed to connect.
+    pub fn allow_executable(mut self, path: impl Into<PathBuf>) -> Self {
+        self.allowed_executables.push(path.into());
+        self
+    }
+
+    /// Remove a previously added executable path from the allow-list.
+    ///
+    /// The comparison is case-insensitive. Does nothing if the path is not present.
+    pub fn remove_executable(mut self, path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
+        self.allowed_executables.retain(|p| {
+            !p.as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&path.as_os_str().to_string_lossy())
+        });
+        self
+    }
+
     /// Build a named pipe server configuration.
     pub fn build(self) -> Result<NamedPipeServerConfig> {
         let pipe_name = self.pipe_name.ok_or_else(|| {
@@ -123,6 +150,7 @@ impl NamedPipeServerBuilder {
             in_buffer_size: self.in_buffer_size,
             default_timeout: self.default_timeout,
             security: self.security,
+            allowed_executables: self.allowed_executables,
         })
     }
 }
@@ -144,6 +172,7 @@ pub struct NamedPipeServerConfig {
     in_buffer_size: u32,
     default_timeout: Duration,
     security: PipeSecurityOptions,
+    allowed_executables: Vec<PathBuf>,
 }
 
 impl NamedPipeServerConfig {
@@ -198,6 +227,7 @@ impl NamedPipeServerConfig {
                 self.pipe_type,
             ),
             default_timeout: self.default_timeout,
+            allowed_executables: self.allowed_executables.clone(),
         })
     }
 
@@ -247,6 +277,7 @@ impl NamedPipeServerConfig {
 pub struct NamedPipeServer {
     endpoint: PipeServerEndpoint,
     default_timeout: Duration,
+    allowed_executables: Vec<PathBuf>,
 }
 
 impl NamedPipeServer {
@@ -260,23 +291,104 @@ impl NamedPipeServer {
         self.default_timeout
     }
 
+    /// Add an executable path to the allow-list.
+    ///
+    /// The comparison is case-insensitive. If no paths are in the allow-list (the default),
+    /// all processes are allowed to connect.
+    pub fn allow_executable(&mut self, path: impl Into<PathBuf>) {
+        self.allowed_executables.push(path.into());
+    }
+
+    /// Remove an executable path from the allow-list.
+    ///
+    /// The comparison is case-insensitive. Does nothing if the path is not present.
+    pub fn remove_executable(&mut self, path: impl Into<PathBuf>) {
+        let path = path.into();
+        self.allowed_executables.retain(|p| {
+            !p.as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&path.as_os_str().to_string_lossy())
+        });
+    }
+
     /// Block until a client connects to this instance.
+    ///
+    /// If an executable allow-list was configured via [`NamedPipeServerBuilder::allow_executable`],
+    /// the connecting process's image path is checked against the list. If it does not match,
+    /// the connection is immediately disconnected and an [`Error::AccessDenied`] error is returned.
+    /// An empty allow-list (the default) permits all processes to connect.
     pub fn connect(&self) -> Result<()> {
         let result = unsafe { ConnectNamedPipe(self.endpoint.raw_handle(), None) };
-        if result.is_ok() {
-            return Ok(());
+        if result.is_err() {
+            let code = unsafe { GetLastError().0 as i32 };
+            if code != ERROR_PIPE_CONNECTED.0 as i32 {
+                return Err(map_pipe_windows_error(
+                    "connect",
+                    Some(self.endpoint.pipe_name()),
+                    code,
+                ));
+            }
         }
 
-        let code = unsafe { GetLastError().0 as i32 };
-        if code == ERROR_PIPE_CONNECTED.0 as i32 {
-            return Ok(());
+        if !self.allowed_executables.is_empty() && let Err(e) = self.check_client_executable() {
+            let _ = self.disconnect();
+            return Err(e);
         }
 
-        Err(map_pipe_windows_error(
-            "connect",
-            Some(self.endpoint.pipe_name()),
-            code,
-        ))
+        Ok(())
+    }
+
+    /// Retrieve the connecting client's executable path and verify it is on the allow-list.
+    fn check_client_executable(&self) -> Result<()> {
+        let pipe_name = Cow::Owned(self.endpoint.pipe_name().as_str().to_owned());
+        let mut pid: u32 = 0;
+        let ok = unsafe { GetNamedPipeClientProcessId(self.endpoint.raw_handle(), &mut pid) };
+        if ok.is_err() {
+            return Err(Error::AccessDenied(AccessDeniedError::with_reason(
+                pipe_name,
+                "connect",
+                "could not determine client process id",
+            )));
+        }
+
+        let client_path = match Process::open(ProcessId::new(pid)) {
+            Ok(proc) => match proc.path() {
+                Ok(p) => p,
+                Err(_) => {
+                    return Err(Error::AccessDenied(AccessDeniedError::with_reason(
+                        pipe_name,
+                        "connect",
+                        "could not retrieve client executable path",
+                    )));
+                }
+            },
+            Err(_) => {
+                return Err(Error::AccessDenied(AccessDeniedError::with_reason(
+                    pipe_name,
+                    "connect",
+                    "could not open client process",
+                )));
+            }
+        };
+
+        let allowed = self.allowed_executables.iter().any(|allowed| {
+            allowed.as_os_str().to_string_lossy().eq_ignore_ascii_case(
+                &client_path.as_os_str().to_string_lossy(),
+            )
+        });
+
+        if allowed {
+            Ok(())
+        } else {
+            Err(Error::AccessDenied(AccessDeniedError::with_reason(
+                pipe_name,
+                "connect",
+                Cow::Owned(format!(
+                    "client executable '{}' is not in the allow-list",
+                    client_path.display()
+                )),
+            )))
+        }
     }
 
     /// Disconnect the currently connected client.

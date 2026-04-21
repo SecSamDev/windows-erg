@@ -155,31 +155,6 @@ impl StringCache {
         cache
     }
 
-    /// Get or cache a provider name as a static Cow string.
-    #[allow(dead_code)] // May be used for cached mutations in future
-    fn get_provider(&mut self, name: &str) -> Cow<'static, str> {
-        if let Some(cached) = self.providers.get(name) {
-            cached.clone()
-        } else {
-            let borrowed_name: &'static str = Box::leak(name.to_string().into_boxed_str());
-            let cow = Cow::Borrowed(borrowed_name);
-            self.providers.insert(borrowed_name, cow.clone());
-            cow
-        }
-    }
-
-    /// Get or cache a channel name as a static Cow string.
-    #[allow(dead_code)] // May be used for cached mutations in future
-    fn get_channel(&mut self, name: &str) -> Cow<'static, str> {
-        if let Some(cached) = self.channels.get(name) {
-            cached.clone()
-        } else {
-            let borrowed_name: &'static str = Box::leak(name.to_string().into_boxed_str());
-            let cow = Cow::Borrowed(borrowed_name);
-            self.channels.insert(borrowed_name, cow.clone());
-            cow
-        }
-    }
 }
 
 /// Static cache instance (lazy initialized).
@@ -188,31 +163,25 @@ static STRING_CACHE: OnceLock<StringCache> = OnceLock::new();
 /// Get cached provider name.
 ///
 /// Common provider names (Security, System, etc.) are cached as static strings.
-/// New names are cached on first access using `Box::leak()`.
+/// Unknown names are returned as owned strings.
 pub fn intern_provider(name: &str) -> Cow<'static, str> {
     let cache = STRING_CACHE.get_or_init(StringCache::new);
-    // Find in read-only cache first
     if let Some(cached) = cache.providers.get(name) {
         return cached.clone();
     }
-    // Not in cache - must be created via leak
-    let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
-    Cow::Borrowed(leaked)
+    Cow::Owned(name.to_string())
 }
 
 /// Get cached channel name.
 ///
 /// Common channel names (Security, Operational, etc.) are cached as static strings.
-/// New names are cached on first access using `Box::leak()`.
+/// Unknown names are returned as owned strings.
 pub fn intern_channel(name: &str) -> Cow<'static, str> {
     let cache = STRING_CACHE.get_or_init(StringCache::new);
-    // Find in read-only cache first
     if let Some(cached) = cache.channels.get(name) {
         return cached.clone();
     }
-    // Not in cache - must be created via leak
-    let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
-    Cow::Borrowed(leaked)
+    Cow::Owned(name.to_string())
 }
 
 /// Intern common EventData field names to reduce allocations.
