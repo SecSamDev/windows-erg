@@ -1,22 +1,28 @@
 use std::borrow::Cow;
+use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::io;
 
-use windows::Win32::Foundation::{ERROR_PIPE_CONNECTED, GetLastError};
-use windows::Win32::Storage::FileSystem::{
-    FILE_FLAGS_AND_ATTRIBUTES, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND,
-    ReadFile, WriteFile,
+use windows::Win32::Foundation::{
+    ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, ERROR_PIPE_CONNECTED, GetLastError, WAIT_FAILED,
+    WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
+use windows::Win32::Storage::FileSystem::{
+    FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_INBOUND,
+    PIPE_ACCESS_OUTBOUND, ReadFile, WriteFile,
+};
+use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
     NAMED_PIPE_MODE, PIPE_READMODE_BYTE, PIPE_READMODE_MESSAGE, PIPE_REJECT_REMOTE_CLIENTS,
     PIPE_TYPE_BYTE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
+use windows::Win32::System::Threading::WaitForMultipleObjects;
 use windows::core::PCWSTR;
 
-use crate::error::{AccessDeniedError, InvalidParameterError};
+use crate::error::{AccessDeniedError, InvalidParameterError, PipeConnectError, PipeError, PipeTimeoutError};
 use crate::process::{Process, ProcessId};
+use crate::wait::WaitHandle;
 use crate::{Error, Result};
 
 use super::error_map::map_pipe_windows_error;
@@ -330,11 +336,120 @@ impl NamedPipeServer {
             }
         }
 
+        self.validate_connected_client()?;
+        Ok(())
+    }
+
+    /// Block until a client connects to this instance or the timeout elapses.
+    ///
+    /// This method returns [`Error::Pipe(PipeError::Timeout)`] if no client connection is
+    /// completed within the provided timeout.
+    pub fn connect_with_timeout(&self, timeout: Duration) -> Result<()> {
+        let wait = WaitHandle::manual_reset(false)?;
+        self.connect_with_wait_timeout(&wait, timeout)
+    }
+
+    /// Block until a client connects or an external wait handle is signaled
+    ///
+    /// If `wait` is signaled first, this method cancels the pending connect operation and
+    /// returns [`Error::Pipe(PipeError::Connect)`] with interruption context.
+    pub fn connect_with_wait(&self, wait: &WaitHandle) -> Result<()> {
+        self.connect_with_wait_timeout(wait, Duration::MAX)
+    }
+
+    /// Block until a client connects, an external wait handle is signaled, or timeout elapses.
+    ///
+    /// If `wait` is signaled first, this method cancels the pending connect operation and
+    /// returns [`Error::Pipe(PipeError::Connect)`] with interruption context.
+    pub fn connect_with_wait_timeout(&self, wait: &WaitHandle, timeout: Duration) -> Result<()> {
+        let connect_event = WaitHandle::manual_reset(false)?;
+        let mut overlapped = OVERLAPPED {
+            hEvent: connect_event.raw_handle(),
+            ..Default::default()
+        };
+
+        let mut connect_code: Option<i32> = None;
+        let result = unsafe { ConnectNamedPipe(self.endpoint.raw_handle(), Some(&mut overlapped)) };
+        if result.is_err() {
+            let code = unsafe { GetLastError().0 as i32 };
+            connect_code = Some(code);
+            if code != ERROR_IO_PENDING.0 as i32 && code != ERROR_PIPE_CONNECTED.0 as i32 {
+                return Err(map_pipe_windows_error(
+                    "connect",
+                    Some(self.endpoint.pipe_name()),
+                    code,
+                ));
+            }
+        }
+
+        if result.is_ok() || connect_code == Some(ERROR_PIPE_CONNECTED.0 as i32) {
+            self.validate_connected_client()?;
+            return Ok(());
+        }
+
+        let handles = [connect_event.raw_handle(), wait.raw_handle()];
+        let wait_result = unsafe {
+            WaitForMultipleObjects(&handles, false, duration_to_wait_ms(timeout))
+        };
+
+        if wait_result == WAIT_OBJECT_0 {
+            let mut transferred = 0u32;
+            unsafe {
+                GetOverlappedResult(
+                    self.endpoint.raw_handle(),
+                    &overlapped,
+                    &mut transferred,
+                    false,
+                )
+            }
+            .map_err(|_| {
+                let code = unsafe { GetLastError().0 as i32 };
+                map_pipe_windows_error("connect", Some(self.endpoint.pipe_name()), code)
+            })?;
+
+            self.validate_connected_client()?;
+            return Ok(());
+        }
+
+        if wait_result == windows::Win32::Foundation::WAIT_EVENT(WAIT_OBJECT_0.0 + 1) {
+            let _ = unsafe { CancelIoEx(self.endpoint.raw_handle(), Some(&overlapped)) };
+            return Err(Error::Pipe(PipeError::Connect(
+                PipeConnectError::new(Cow::Owned(self.endpoint.pipe_name().as_str().to_owned()))
+                    .with_context("connect interrupted by wait handle signal")
+                    .with_code(ERROR_OPERATION_ABORTED.0 as i32),
+            )));
+        }
+
+        if wait_result == WAIT_TIMEOUT {
+            let _ = unsafe { CancelIoEx(self.endpoint.raw_handle(), Some(&overlapped)) };
+            return Err(Error::Pipe(PipeError::Timeout(PipeTimeoutError::new(
+                Cow::Owned(self.endpoint.pipe_name().as_str().to_owned()),
+                Cow::Borrowed("connect"),
+            ))));
+        }
+
+        let _ = unsafe { CancelIoEx(self.endpoint.raw_handle(), Some(&overlapped)) };
+        if wait_result == WAIT_FAILED {
+            let code = unsafe { GetLastError().0 as i32 };
+            return Err(map_pipe_windows_error(
+                "connect",
+                Some(self.endpoint.pipe_name()),
+                code,
+            ));
+        }
+
+        Err(map_pipe_windows_error(
+            "connect",
+            Some(self.endpoint.pipe_name()),
+            wait_result.0 as i32,
+        ))
+    }
+
+    fn validate_connected_client(&self) -> Result<()> {
         if !self.allowed_executables.is_empty() && let Err(e) = self.check_client_executable() {
             let _ = self.disconnect();
             return Err(e);
         }
-
         Ok(())
     }
 
@@ -400,6 +515,10 @@ impl NamedPipeServer {
     }
 }
 
+fn duration_to_wait_ms(timeout: Duration) -> u32 {
+    timeout.as_millis().min(u32::MAX as u128) as u32
+}
+
 impl io::Read for NamedPipeServer {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut read = 0u32;
@@ -431,9 +550,15 @@ impl io::Write for NamedPipeServer {
 
 fn to_server_open_mode(open_mode: NamedPipeOpenMode) -> FILE_FLAGS_AND_ATTRIBUTES {
     match open_mode {
-        NamedPipeOpenMode::Inbound => PIPE_ACCESS_INBOUND,
-        NamedPipeOpenMode::Outbound => PIPE_ACCESS_OUTBOUND,
-        NamedPipeOpenMode::Duplex => PIPE_ACCESS_DUPLEX,
+        NamedPipeOpenMode::Inbound => {
+            FILE_FLAGS_AND_ATTRIBUTES(PIPE_ACCESS_INBOUND.0 | FILE_FLAG_OVERLAPPED.0)
+        }
+        NamedPipeOpenMode::Outbound => {
+            FILE_FLAGS_AND_ATTRIBUTES(PIPE_ACCESS_OUTBOUND.0 | FILE_FLAG_OVERLAPPED.0)
+        }
+        NamedPipeOpenMode::Duplex => {
+            FILE_FLAGS_AND_ATTRIBUTES(PIPE_ACCESS_DUPLEX.0 | FILE_FLAG_OVERLAPPED.0)
+        }
     }
 }
 

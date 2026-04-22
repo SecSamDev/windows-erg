@@ -27,6 +27,9 @@ pub enum Error {
     /// A process-specific error.
     Process(ProcessError),
 
+    /// A service-specific error.
+    Service(ServiceError),
+
     /// A thread-specific error.
     Thread(ThreadError),
 
@@ -64,6 +67,7 @@ impl fmt::Display for Error {
             Error::InvalidParameter(e) => write!(f, "{}", e),
             Error::Registry(e) => write!(f, "{}", e),
             Error::Process(e) => write!(f, "{}", e),
+            Error::Service(e) => write!(f, "{}", e),
             Error::Thread(e) => write!(f, "{}", e),
             Error::EventLog(e) => write!(f, "{}", e),
             Error::Etw(e) => write!(f, "{}", e),
@@ -1076,6 +1080,242 @@ impl fmt::Display for RegistryConversionError {
 }
 
 impl std::error::Error for RegistryConversionError {}
+
+// ============================================================================
+// Service Errors
+// ============================================================================
+
+/// Service-specific errors.
+#[derive(Debug)]
+pub enum ServiceError {
+    /// Failed to open or use the Service Control Manager.
+    ManagerError(ServiceManagerError),
+
+    /// Service not found.
+    NotFound(ServiceNotFoundError),
+
+    /// Service operation failed.
+    OperationFailed(ServiceOperationError),
+
+    /// Service is in an invalid state for the requested operation.
+    InvalidState(ServiceInvalidStateError),
+}
+
+impl fmt::Display for ServiceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ServiceError::ManagerError(e) => write!(f, "{}", e),
+            ServiceError::NotFound(e) => write!(f, "{}", e),
+            ServiceError::OperationFailed(e) => write!(f, "{}", e),
+            ServiceError::InvalidState(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for ServiceError {}
+
+/// Service Control Manager failure details.
+#[derive(Debug)]
+pub struct ServiceManagerError {
+    /// Operation that failed.
+    pub operation: Cow<'static, str>,
+    /// Failure reason.
+    pub reason: Cow<'static, str>,
+    /// Optional Windows error code.
+    pub error_code: Option<i32>,
+}
+
+impl ServiceManagerError {
+    /// Create a new service manager error.
+    pub fn new(
+        operation: impl Into<Cow<'static, str>>,
+        reason: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        ServiceManagerError {
+            operation: operation.into(),
+            reason: reason.into(),
+            error_code: None,
+        }
+    }
+
+    /// Create a service manager error with error code.
+    pub fn with_code(
+        operation: impl Into<Cow<'static, str>>,
+        reason: impl Into<Cow<'static, str>>,
+        error_code: i32,
+    ) -> Self {
+        ServiceManagerError {
+            operation: operation.into(),
+            reason: reason.into(),
+            error_code: Some(error_code),
+        }
+    }
+}
+
+impl fmt::Display for ServiceManagerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(code) = self.error_code {
+            write!(
+                f,
+                "Service manager operation '{}' failed: {} (error code: 0x{:08X})",
+                self.operation, self.reason, code
+            )
+        } else {
+            write!(
+                f,
+                "Service manager operation '{}' failed: {}",
+                self.operation, self.reason
+            )
+        }
+    }
+}
+
+impl std::error::Error for ServiceManagerError {}
+
+/// Service not found details.
+#[derive(Debug)]
+pub struct ServiceNotFoundError {
+    /// Service key name.
+    pub name: Cow<'static, str>,
+    /// Optional Windows error code.
+    pub error_code: Option<i32>,
+}
+
+impl ServiceNotFoundError {
+    /// Create a new service not found error.
+    pub fn new(name: impl Into<Cow<'static, str>>) -> Self {
+        ServiceNotFoundError {
+            name: name.into(),
+            error_code: None,
+        }
+    }
+
+    /// Create a service not found error with error code.
+    pub fn with_code(name: impl Into<Cow<'static, str>>, error_code: i32) -> Self {
+        ServiceNotFoundError {
+            name: name.into(),
+            error_code: Some(error_code),
+        }
+    }
+}
+
+impl fmt::Display for ServiceNotFoundError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(code) = self.error_code {
+            write!(
+                f,
+                "Service '{}' not found (error code: 0x{:08X})",
+                self.name, code
+            )
+        } else {
+            write!(f, "Service '{}' not found", self.name)
+        }
+    }
+}
+
+impl std::error::Error for ServiceNotFoundError {}
+
+/// Service operation failure details.
+#[derive(Debug)]
+pub struct ServiceOperationError {
+    /// Service key name.
+    pub name: Cow<'static, str>,
+    /// Operation that failed.
+    pub operation: Cow<'static, str>,
+    /// Failure reason.
+    pub reason: Cow<'static, str>,
+    /// Optional Windows error code.
+    pub error_code: Option<i32>,
+}
+
+impl ServiceOperationError {
+    /// Create a new service operation error.
+    pub fn new(
+        name: impl Into<Cow<'static, str>>,
+        operation: impl Into<Cow<'static, str>>,
+        reason: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        ServiceOperationError {
+            name: name.into(),
+            operation: operation.into(),
+            reason: reason.into(),
+            error_code: None,
+        }
+    }
+
+    /// Create a service operation error with error code.
+    pub fn with_code(
+        name: impl Into<Cow<'static, str>>,
+        operation: impl Into<Cow<'static, str>>,
+        reason: impl Into<Cow<'static, str>>,
+        error_code: i32,
+    ) -> Self {
+        ServiceOperationError {
+            name: name.into(),
+            operation: operation.into(),
+            reason: reason.into(),
+            error_code: Some(error_code),
+        }
+    }
+}
+
+impl fmt::Display for ServiceOperationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(code) = self.error_code {
+            write!(
+                f,
+                "Service '{}' operation '{}' failed: {} (error code: 0x{:08X})",
+                self.name, self.operation, self.reason, code
+            )
+        } else {
+            write!(
+                f,
+                "Service '{}' operation '{}' failed: {}",
+                self.name, self.operation, self.reason
+            )
+        }
+    }
+}
+
+impl std::error::Error for ServiceOperationError {}
+
+/// Service invalid-state error details.
+#[derive(Debug)]
+pub struct ServiceInvalidStateError {
+    /// Service key name.
+    pub name: Cow<'static, str>,
+    /// Expected state or condition.
+    pub expected: Cow<'static, str>,
+    /// Why the state is invalid.
+    pub reason: Cow<'static, str>,
+}
+
+impl ServiceInvalidStateError {
+    /// Create a new service invalid-state error.
+    pub fn new(
+        name: impl Into<Cow<'static, str>>,
+        expected: impl Into<Cow<'static, str>>,
+        reason: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        ServiceInvalidStateError {
+            name: name.into(),
+            expected: expected.into(),
+            reason: reason.into(),
+        }
+    }
+}
+
+impl fmt::Display for ServiceInvalidStateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Service '{}' is not in expected state '{}': {}",
+            self.name, self.expected, self.reason
+        )
+    }
+}
+
+impl std::error::Error for ServiceInvalidStateError {}
 
 // ============================================================================
 // Process Errors

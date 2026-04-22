@@ -42,6 +42,7 @@
 //! - [`etw`] - Event Tracing for Windows (ETW)
 //! - [`file`] - Raw file operations
 //! - [`pipes`] - Windows named and anonymous pipe API (in progress)
+//! - [`service`] - Windows Service Control Manager operations
 
 #![warn(missing_docs)]
 #![cfg(windows)]
@@ -56,10 +57,14 @@ pub mod process;
 pub mod proxy;
 pub mod registry;
 pub mod security;
+pub mod service;
 pub mod types;
+/// Shared wait-object primitives for cancellation and coordination.
+pub mod wait;
 
 pub use error::{Error, Result};
 pub use types::{ProcessId, ThreadId};
+pub use wait::WaitHandle;
 
 /// Check if the current process is running with elevated (administrator) privileges.
 ///

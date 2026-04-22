@@ -20,6 +20,7 @@ pub use anonymous::{
 pub use client::{NamedPipeClient, NamedPipeClientBuilder, NamedPipeClientConfig};
 pub use integration::{ChildPipeEndpoints, PipeStdio};
 pub use server::{NamedPipeServer, NamedPipeServerBuilder, NamedPipeServerConfig};
+pub use crate::wait::WaitHandle;
 pub use types::{
     NamedPipeOpenMode, NamedPipeType, PipeClientEndpoint, PipeName, PipeSecurityOptions,
     PipeServerEndpoint,

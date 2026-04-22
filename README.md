@@ -44,6 +44,7 @@ windows-erg = "0.1"
 - proxy: system and URL-specific proxy resolution
 - mitigation: process mitigation query/apply helpers
 - file: raw file operations
+- service: Windows Service Control Manager query/control/enumeration
 - security, pipes: security and IPC primitives
 
 ## Quick Examples
@@ -173,6 +174,8 @@ See examples:
 - examples/proxy_system.rs
 - examples/proxy_for_url.rs
 - examples/raw_file_copy.rs
+- examples/service_basics.rs
+- examples/service_enumerate.rs
 - examples/security_permissions.rs
 
 Run one example:

@@ -403,6 +403,69 @@ pub struct MemoryInfo {
     /// Page fault count.
     pub page_fault_count: u32,
 }
+
+/// Process CPU time counters.
+///
+/// Values are cumulative from process start, in 100-nanosecond units.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProcessCpuTimes {
+    /// Cumulative time spent in user mode (100ns units).
+    pub user_time_100ns: u64,
+    /// Cumulative time spent in kernel mode (100ns units).
+    pub kernel_time_100ns: u64,
+    /// Sum of user and kernel times (100ns units).
+    pub total_time_100ns: u64,
+}
+
+/// Extended process memory metrics.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProcessMemoryMetrics {
+    /// Working set size in bytes.
+    pub working_set_bytes: usize,
+    /// Peak working set size in bytes.
+    pub peak_working_set_bytes: usize,
+    /// Page fault count.
+    pub page_fault_count: u32,
+    /// Private memory usage in bytes.
+    pub private_usage_bytes: usize,
+    /// Commit charge (pagefile usage) in bytes.
+    pub commit_usage_bytes: usize,
+    /// Peak commit charge in bytes.
+    pub peak_commit_usage_bytes: usize,
+}
+
+/// Point-in-time metrics for a process.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProcessMetrics {
+    /// Memory metrics.
+    pub memory: ProcessMemoryMetrics,
+    /// CPU time counters.
+    pub cpu: ProcessCpuTimes,
+}
+
+/// Point-in-time memory metrics for the host.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HostMemoryMetrics {
+    /// Total visible physical memory in bytes.
+    pub total_physical_bytes: u64,
+    /// Available physical memory in bytes.
+    pub available_physical_bytes: u64,
+    /// Total virtual memory available to the process in bytes.
+    pub total_virtual_bytes: u64,
+    /// Available virtual memory in bytes.
+    pub available_virtual_bytes: u64,
+    /// Percentage of physical memory in use.
+    pub memory_load_percent: u32,
+}
+
+/// Point-in-time metrics for the host.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HostMetrics {
+    /// Number of logical processors visible to the current process.
+    pub logical_cpu_count: u32,
+    /// Host memory metrics.
+    pub memory: HostMemoryMetrics,
+}
 #[cfg(test)]
 mod tests {
     use super::*;

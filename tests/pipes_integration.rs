@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use windows_erg::pipes::{
     AnonymousPipeBuilder, NamedPipeClientBuilder, NamedPipeOpenMode, NamedPipeServerBuilder,
-    NamedPipeType, PipeName, PipeSecurityOptions,
+    NamedPipeType, PipeName, PipeSecurityOptions, WaitHandle,
 };
 use windows_erg::security::{AccessMask, Ace, AceType, Dacl, SecurityDescriptor, Sid};
 use windows_erg::{
@@ -193,6 +193,129 @@ fn connect_when_all_instances_busy_returns_timeout_or_busy() -> windows_erg::Res
     server_thread
         .join()
         .expect("server thread should not panic")?;
+
+    Ok(())
+}
+
+#[test]
+fn server_connect_with_timeout_succeeds() -> windows_erg::Result<()> {
+    let pipe_name = unique_pipe_name("connect-timeout-success");
+
+    let server_cfg = NamedPipeServerBuilder::new()
+        .pipe_name(pipe_name.clone())
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .pipe_type(NamedPipeType::Byte)
+        .build()?;
+
+    let client_cfg = NamedPipeClientBuilder::new()
+        .pipe_name(pipe_name)
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .connect_timeout(Duration::from_secs(2))
+        .build()?;
+
+    let server_thread = thread::spawn(move || -> windows_erg::Result<()> {
+        let server = server_cfg.create()?;
+        server.connect_with_timeout(Duration::from_secs(2))?;
+        server.disconnect()?;
+        Ok(())
+    });
+
+    thread::sleep(Duration::from_millis(30));
+    let _client = client_cfg.connect()?;
+
+    server_thread
+        .join()
+        .expect("server thread should not panic")?;
+
+    Ok(())
+}
+
+#[test]
+fn server_connect_with_timeout_times_out() -> windows_erg::Result<()> {
+    let pipe_name = unique_pipe_name("connect-timeout-fail");
+
+    let server_cfg = NamedPipeServerBuilder::new()
+        .pipe_name(pipe_name)
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .pipe_type(NamedPipeType::Byte)
+        .build()?;
+
+    let server = server_cfg.create()?;
+    let err = server
+        .connect_with_timeout(Duration::from_millis(75))
+        .expect_err("connect_with_timeout should time out without a client");
+
+    match err {
+        Error::Pipe(PipeError::Timeout(timeout_err)) => {
+            assert_eq!(timeout_err.operation.as_ref(), "connect");
+        }
+        other => panic!("expected Pipe::Timeout error, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn server_connect_with_wait_interrupted() -> windows_erg::Result<()> {
+    let pipe_name = unique_pipe_name("connect-wait-interrupted");
+
+    let server_cfg = NamedPipeServerBuilder::new()
+        .pipe_name(pipe_name)
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .pipe_type(NamedPipeType::Byte)
+        .build()?;
+
+    let server = server_cfg.create()?;
+    let wait = WaitHandle::manual_reset(false)?;
+    wait.set()?;
+    let err = server
+        .connect_with_wait_timeout(&wait, Duration::from_secs(3))
+        .expect_err("connect_with_wait_timeout should be interrupted by wait signal");
+
+    match err {
+        Error::Pipe(PipeError::Connect(connect_err)) => {
+            let context = connect_err
+                .context
+                .as_ref()
+                .map(|c| c.as_ref())
+                .unwrap_or_default();
+            assert!(context.contains("interrupted"));
+        }
+        other => panic!("expected Pipe::Connect error, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn server_connect_with_wait_object_interrupted() -> windows_erg::Result<()> {
+    let pipe_name = unique_pipe_name("connect-wait-object-interrupted");
+
+    let server_cfg = NamedPipeServerBuilder::new()
+        .pipe_name(pipe_name)
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .pipe_type(NamedPipeType::Byte)
+        .build()?;
+
+    let server = server_cfg.create()?;
+    let wait = WaitHandle::manual_reset(false)?;
+    wait.set()?;
+
+    let err = server
+        .connect_with_wait(&wait)
+        .expect_err("connect_with_wait should be interrupted by wait signal");
+
+    match err {
+        Error::Pipe(PipeError::Connect(connect_err)) => {
+            let context = connect_err
+                .context
+                .as_ref()
+                .map(|c| c.as_ref())
+                .unwrap_or_default();
+            assert!(context.contains("interrupted"));
+        }
+        other => panic!("expected Pipe::Connect error, got {other:?}"),
+    }
 
     Ok(())
 }

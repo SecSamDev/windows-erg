@@ -26,6 +26,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Kernel",
     "Win32_System_Pipes",
     "Win32_System_SystemServices",
+    "Win32_System_Services",
     "Win32_System_IO",
     "Win32_System_Ioctl",
     
@@ -116,6 +117,10 @@ name = "process_monitoring"
 path = "examples/process_monitoring.rs"
 
 [[example]]
+name = "process_metrics"
+path = "examples/process_metrics.rs"
+
+[[example]]
 name = "process_tree"
 path = "examples/process_tree.rs"
 
@@ -130,3 +135,11 @@ path = "examples/process_mitigation.rs"
 [[example]]
 name = "raw_file_copy"
 path = "examples/raw_file_copy.rs"
+
+[[example]]
+name = "service_basics"
+path = "examples/service_basics.rs"
+
+[[example]]
+name = "service_enumerate"
+path = "examples/service_enumerate.rs"

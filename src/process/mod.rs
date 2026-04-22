@@ -91,6 +91,7 @@
 
 mod list;
 mod memory;
+mod metrics;
 mod modules;
 mod peb;
 mod processes;
@@ -101,6 +102,9 @@ mod types;
 // Re-export public types
 pub use processes::Process;
 pub use types::{
-    MemoryInfo, ModuleInfo, ProcessAccess, ProcessId, ProcessInfo, ProcessParameters, ThreadId,
+    HostMemoryMetrics, HostMetrics, MemoryInfo, ModuleInfo, ProcessAccess, ProcessCpuTimes,
+    ProcessId, ProcessInfo, ProcessMemoryMetrics, ProcessMetrics, ProcessParameters, ThreadId,
     ThreadInfo,
 };
+
+pub use metrics::{host_cpu_usage, host_metrics};

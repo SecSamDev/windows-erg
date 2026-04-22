@@ -194,7 +194,7 @@ impl Process {
         // Ensure buffer has capacity (1024 bytes = 512 u16 chars)
         out_buffer.clear();
         if out_buffer.capacity() < 1024 {
-            out_buffer.reserve(1024 - out_buffer.capacity());
+            out_buffer.reserve(1024);
         }
         unsafe {
             out_buffer.set_len(1024);

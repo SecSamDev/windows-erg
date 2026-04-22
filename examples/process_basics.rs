@@ -2,9 +2,23 @@
 //!
 //! Demonstrates listing processes, getting process information, and reading PEB data.
 
+use std::time::Duration;
 use windows_erg::process::Process;
 
 fn main() -> windows_erg::Result<()> {
+    println!("=== Host Metrics ===\n");
+    let host = windows_erg::process::host_metrics()?;
+    println!("Logical CPU count: {}", host.logical_cpu_count);
+    println!(
+        "Physical memory: {} / {} MB available",
+        host.memory.available_physical_bytes / 1024 / 1024,
+        host.memory.total_physical_bytes / 1024 / 1024
+    );
+    println!("Memory load: {}%", host.memory.memory_load_percent);
+
+    let host_cpu = windows_erg::process::host_cpu_usage(Duration::from_millis(250))?;
+    println!("Host CPU usage (250ms window): {:.2}%\n", host_cpu);
+
     println!("=== Process List Example ===\n");
 
     // List all processes
@@ -62,6 +76,30 @@ fn main() -> windows_erg::Result<()> {
             println!("  Page faults: {}", mem.page_fault_count);
         }
         Err(e) => println!("\nCould not read memory info: {}", e),
+    }
+
+    match current.metrics() {
+        Ok(metrics) => {
+            println!("\nExtended Process Metrics:");
+            println!(
+                "  Private usage: {} MB",
+                metrics.memory.private_usage_bytes / 1024 / 1024
+            );
+            println!(
+                "  Commit usage: {} MB",
+                metrics.memory.commit_usage_bytes / 1024 / 1024
+            );
+            println!(
+                "  CPU total time: {:.3}s",
+                (metrics.cpu.total_time_100ns as f64) / 10_000_000.0
+            );
+        }
+        Err(e) => println!("\nCould not read extended process metrics: {}", e),
+    }
+
+    match current.cpu_usage(Duration::from_millis(250)) {
+        Ok(cpu) => println!("Current process CPU usage (250ms window): {:.2}%", cpu),
+        Err(e) => println!("Could not compute process CPU usage: {}", e),
     }
 
     // Get threads
