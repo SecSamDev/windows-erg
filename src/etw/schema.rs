@@ -1,4 +1,5 @@
 use super::decode::{EventField, EventFieldValue};
+use crate::utils::to_utf16_nul;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use windows::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
@@ -102,9 +103,9 @@ impl SchemaCache {
 
     pub(crate) fn parse_event_fields(&mut self, record: &EVENT_RECORD) -> Option<Vec<EventField>> {
         let key = SchemaKey::from_record(record);
-        if !self.cache.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.cache.entry(key) {
             let schema = build_schema(record)?;
-            self.cache.insert(key, schema);
+            e.insert(schema);
         }
 
         let schema = self.cache.get(&key)?.clone();
@@ -201,7 +202,7 @@ impl MapDefinition {
 }
 
 fn load_event_map(record: &EVENT_RECORD, map_name: &str) -> Option<MapDefinition> {
-    let wide_name: Vec<u16> = map_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide_name = to_utf16_nul(map_name);
     let mut size = 0u32;
     let first = unsafe {
         Etw::TdhGetEventMapInformation(record, PCWSTR(wide_name.as_ptr()), None, &mut size)
@@ -458,25 +459,25 @@ fn parse_counted_value(
 }
 
 fn element_size_hint(prop: &PropertyMeta) -> Option<usize> {
-    if prop.out_type == TDH_OUTTYPE_IPV4.0 as i32 {
+    if prop.out_type == TDH_OUTTYPE_IPV4.0 {
         return Some(4);
     }
-    if prop.out_type == TDH_OUTTYPE_IPV6.0 as i32 {
+    if prop.out_type == TDH_OUTTYPE_IPV6.0 {
         return Some(16);
     }
 
     match prop.in_type {
-        t if t == TDH_INTYPE_UINT8.0 as i32 => Some(1),
-        t if t == TDH_INTYPE_UINT16.0 as i32 => Some(2),
-        t if t == TDH_INTYPE_UINT32.0 as i32 => Some(4),
-        t if t == TDH_INTYPE_UINT64.0 as i32 => Some(8),
-        t if t == TDH_INTYPE_INT32.0 as i32 => Some(4),
-        t if t == TDH_INTYPE_INT64.0 as i32 => Some(8),
-        t if t == TDH_INTYPE_BOOLEAN.0 as i32 => Some(4),
-        t if t == TDH_INTYPE_GUID.0 as i32 => Some(16),
-        t if t == TDH_INTYPE_POINTER.0 as i32 => Some(8),
-        t if t == TDH_INTYPE_UNICODESTRING.0 as i32 => None,
-        t if t == TDH_INTYPE_ANSISTRING.0 as i32 => None,
+        t if t == TDH_INTYPE_UINT8.0 => Some(1),
+        t if t == TDH_INTYPE_UINT16.0 => Some(2),
+        t if t == TDH_INTYPE_UINT32.0 => Some(4),
+        t if t == TDH_INTYPE_UINT64.0 => Some(8),
+        t if t == TDH_INTYPE_INT32.0 => Some(4),
+        t if t == TDH_INTYPE_INT64.0 => Some(8),
+        t if t == TDH_INTYPE_BOOLEAN.0 => Some(4),
+        t if t == TDH_INTYPE_GUID.0 => Some(16),
+        t if t == TDH_INTYPE_POINTER.0 => Some(8),
+        t if t == TDH_INTYPE_UNICODESTRING.0 => None,
+        t if t == TDH_INTYPE_ANSISTRING.0 => None,
         t if t == TDH_INTYPE_IPV4_VALUE => Some(4),
         t if t == TDH_INTYPE_IPV6_VALUE => Some(16),
         _ => None,
@@ -513,7 +514,7 @@ fn parse_one_value(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFieldValue,
     }
 
     match prop.in_type {
-        t if t == TDH_INTYPE_UINT8.0 as i32 => {
+        t if t == TDH_INTYPE_UINT8.0 => {
             if prefer_fixed_blob(1) {
                 return Some((
                     EventFieldValue::Binary(data[..size_hint].to_vec()),
@@ -522,7 +523,7 @@ fn parse_one_value(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFieldValue,
             }
             Some((EventFieldValue::U8(*data.first()?), 1))
         }
-        t if t == TDH_INTYPE_UINT16.0 as i32 => {
+        t if t == TDH_INTYPE_UINT16.0 => {
             if prefer_fixed_blob(2) {
                 return Some((
                     EventFieldValue::Binary(data[..size_hint].to_vec()),
@@ -532,7 +533,7 @@ fn parse_one_value(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFieldValue,
             let bytes: [u8; 2] = data.get(0..2)?.try_into().ok()?;
             Some((EventFieldValue::U16(u16::from_le_bytes(bytes)), 2))
         }
-        t if t == TDH_INTYPE_UINT32.0 as i32 => {
+        t if t == TDH_INTYPE_UINT32.0 => {
             if prefer_fixed_blob(4) {
                 return Some((
                     EventFieldValue::Binary(data[..size_hint].to_vec()),
@@ -542,7 +543,7 @@ fn parse_one_value(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFieldValue,
             let bytes: [u8; 4] = data.get(0..4)?.try_into().ok()?;
             Some((EventFieldValue::U32(u32::from_le_bytes(bytes)), 4))
         }
-        t if t == TDH_INTYPE_UINT64.0 as i32 => {
+        t if t == TDH_INTYPE_UINT64.0 => {
             if prefer_fixed_blob(8) {
                 return Some((
                     EventFieldValue::Binary(data[..size_hint].to_vec()),
@@ -552,7 +553,7 @@ fn parse_one_value(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFieldValue,
             let bytes: [u8; 8] = data.get(0..8)?.try_into().ok()?;
             Some((EventFieldValue::U64(u64::from_le_bytes(bytes)), 8))
         }
-        t if t == TDH_INTYPE_INT32.0 as i32 => {
+        t if t == TDH_INTYPE_INT32.0 => {
             if prefer_fixed_blob(4) {
                 return Some((
                     EventFieldValue::Binary(data[..size_hint].to_vec()),
@@ -562,7 +563,7 @@ fn parse_one_value(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFieldValue,
             let bytes: [u8; 4] = data.get(0..4)?.try_into().ok()?;
             Some((EventFieldValue::I32(i32::from_le_bytes(bytes)), 4))
         }
-        t if t == TDH_INTYPE_INT64.0 as i32 => {
+        t if t == TDH_INTYPE_INT64.0 => {
             if prefer_fixed_blob(8) {
                 return Some((
                     EventFieldValue::Binary(data[..size_hint].to_vec()),
@@ -572,15 +573,15 @@ fn parse_one_value(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFieldValue,
             let bytes: [u8; 8] = data.get(0..8)?.try_into().ok()?;
             Some((EventFieldValue::I64(i64::from_le_bytes(bytes)), 8))
         }
-        t if t == TDH_INTYPE_BOOLEAN.0 as i32 => {
+        t if t == TDH_INTYPE_BOOLEAN.0 => {
             let bytes: [u8; 4] = data.get(0..4)?.try_into().ok()?;
             Some((EventFieldValue::Bool(u32::from_le_bytes(bytes) != 0), 4))
         }
-        t if t == TDH_INTYPE_GUID.0 as i32 => {
+        t if t == TDH_INTYPE_GUID.0 => {
             let g = parse_guid(data)?;
             Some((EventFieldValue::Guid(g), 16))
         }
-        t if t == TDH_INTYPE_POINTER.0 as i32 => {
+        t if t == TDH_INTYPE_POINTER.0 => {
             if size_hint == 4 {
                 let bytes: [u8; 4] = data.get(0..4)?.try_into().ok()?;
                 Some((
@@ -606,7 +607,7 @@ fn parse_one_value(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFieldValue,
                 16,
             ))
         }
-        t if t == TDH_INTYPE_UNICODESTRING.0 as i32 => {
+        t if t == TDH_INTYPE_UNICODESTRING.0 => {
             let (s, consumed) = if size_hint >= 2 && size_hint <= data.len() {
                 parse_utf16_sized(data, size_hint)?
             } else {
@@ -614,7 +615,7 @@ fn parse_one_value(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFieldValue,
             };
             Some((EventFieldValue::String(s), consumed))
         }
-        t if t == TDH_INTYPE_ANSISTRING.0 as i32 => {
+        t if t == TDH_INTYPE_ANSISTRING.0 => {
             let (s, consumed) = if size_hint > 0 && size_hint <= data.len() {
                 parse_ascii_sized(data, size_hint)?
             } else {
@@ -637,49 +638,49 @@ fn parse_out_type_override(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFie
     let size_hint = prop.length as usize;
     let out_type = prop.out_type;
 
-    if out_type == TDH_OUTTYPE_HEXINT8.0 as i32 {
+    if out_type == TDH_OUTTYPE_HEXINT8.0 {
         let v = *data.first()?;
         return Some((EventFieldValue::String(format!("0x{v:02X}")), 1));
     }
 
-    if out_type == TDH_OUTTYPE_HEXINT16.0 as i32 {
+    if out_type == TDH_OUTTYPE_HEXINT16.0 {
         let bytes: [u8; 2] = data.get(0..2)?.try_into().ok()?;
         let v = u16::from_le_bytes(bytes);
         return Some((EventFieldValue::String(format!("0x{v:04X}")), 2));
     }
 
-    if out_type == TDH_OUTTYPE_HEXINT32.0 as i32 {
+    if out_type == TDH_OUTTYPE_HEXINT32.0 {
         let bytes: [u8; 4] = data.get(0..4)?.try_into().ok()?;
         let v = u32::from_le_bytes(bytes);
         return Some((EventFieldValue::String(format!("0x{v:08X}")), 4));
     }
 
-    if out_type == TDH_OUTTYPE_HEXINT64.0 as i32 {
+    if out_type == TDH_OUTTYPE_HEXINT64.0 {
         let bytes: [u8; 8] = data.get(0..8)?.try_into().ok()?;
         let v = u64::from_le_bytes(bytes);
         return Some((EventFieldValue::String(format!("0x{v:016X}")), 8));
     }
 
-    if out_type == TDH_OUTTYPE_HRESULT.0 as i32
-        || out_type == TDH_OUTTYPE_NTSTATUS.0 as i32
-        || out_type == TDH_OUTTYPE_WIN32ERROR.0 as i32
+    if out_type == TDH_OUTTYPE_HRESULT.0
+        || out_type == TDH_OUTTYPE_NTSTATUS.0
+        || out_type == TDH_OUTTYPE_WIN32ERROR.0
     {
         let bytes: [u8; 4] = data.get(0..4)?.try_into().ok()?;
         let v = u32::from_le_bytes(bytes);
         return Some((EventFieldValue::String(format!("0x{v:08X}")), 4));
     }
 
-    if out_type == TDH_OUTTYPE_PORT.0 as i32 {
+    if out_type == TDH_OUTTYPE_PORT.0 {
         let bytes: [u8; 2] = data.get(0..2)?.try_into().ok()?;
         return Some((EventFieldValue::U16(u16::from_le_bytes(bytes)), 2));
     }
 
-    if out_type == TDH_OUTTYPE_PID.0 as i32 || out_type == TDH_OUTTYPE_TID.0 as i32 {
+    if out_type == TDH_OUTTYPE_PID.0 || out_type == TDH_OUTTYPE_TID.0 {
         let bytes: [u8; 4] = data.get(0..4)?.try_into().ok()?;
         return Some((EventFieldValue::U32(u32::from_le_bytes(bytes)), 4));
     }
 
-    if out_type == TDH_OUTTYPE_IPV4.0 as i32 {
+    if out_type == TDH_OUTTYPE_IPV4.0 {
         let bytes: [u8; 4] = data.get(0..4)?.try_into().ok()?;
         return Some((
             EventFieldValue::IpAddr(IpAddr::V4(Ipv4Addr::from(bytes))),
@@ -687,7 +688,7 @@ fn parse_out_type_override(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFie
         ));
     }
 
-    if out_type == TDH_OUTTYPE_IPV6.0 as i32 {
+    if out_type == TDH_OUTTYPE_IPV6.0 {
         let bytes: [u8; 16] = data.get(0..16)?.try_into().ok()?;
         return Some((
             EventFieldValue::IpAddr(IpAddr::V6(Ipv6Addr::from(bytes))),
@@ -695,11 +696,11 @@ fn parse_out_type_override(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFie
         ));
     }
 
-    if out_type == TDH_OUTTYPE_SOCKETADDRESS.0 as i32 {
+    if out_type == TDH_OUTTYPE_SOCKETADDRESS.0 {
         return parse_socket_address(data);
     }
 
-    if out_type == TDH_OUTTYPE_BOOLEAN.0 as i32 {
+    if out_type == TDH_OUTTYPE_BOOLEAN.0 {
         let consumed = if size_hint >= 4 && size_hint <= data.len() {
             4
         } else {
@@ -714,17 +715,15 @@ fn parse_out_type_override(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFie
         return Some((EventFieldValue::Bool(value), consumed));
     }
 
-    if out_type == TDH_OUTTYPE_UTF8.0 as i32
-        || out_type == TDH_OUTTYPE_STRING.0 as i32
-        || out_type == TDH_OUTTYPE_JSON.0 as i32
-        || out_type == TDH_OUTTYPE_XML.0 as i32
-        || out_type == TDH_OUTTYPE_REDUCEDSTRING.0 as i32
-    {
-        if size_hint > 0 && size_hint <= data.len() {
+    if (out_type == TDH_OUTTYPE_UTF8.0
+        || out_type == TDH_OUTTYPE_STRING.0
+        || out_type == TDH_OUTTYPE_JSON.0
+        || out_type == TDH_OUTTYPE_XML.0
+        || out_type == TDH_OUTTYPE_REDUCEDSTRING.0)
+        && size_hint > 0 && size_hint <= data.len() {
             let (s, consumed) = parse_utf8_sized(data, size_hint)?;
             return Some((EventFieldValue::String(s), consumed));
         }
-    }
 
     None
 }

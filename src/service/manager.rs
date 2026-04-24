@@ -6,7 +6,7 @@ use windows::Win32::System::Services::{
     SERVICE_STATE_ALL, SERVICE_WIN32,
 };
 
-use super::service::{as_pcwstr, to_wide, Service};
+use super::service::{as_pcwstr, Service};
 use super::status::ServiceStatus;
 use super::types::{ServiceAccess, ServiceManagerAccess};
 use crate::error::{
@@ -14,6 +14,7 @@ use crate::error::{
     ServiceManagerError, ServiceNotFoundError,
 };
 use crate::Result;
+use crate::utils::to_utf16_nul;
 
 /// Handle to the Windows Service Control Manager.
 pub struct ServiceManager {
@@ -65,7 +66,7 @@ impl ServiceManager {
             )));
         }
 
-        let name_wide = to_wide(name);
+        let name_wide = to_utf16_nul(name);
         let handle = unsafe { OpenServiceW(self.handle, as_pcwstr(&name_wide), access.to_windows()) }
             .map_err(|e| {
                 if e.code().0 == ERROR_SERVICE_DOES_NOT_EXIST.to_hresult().0 {

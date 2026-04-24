@@ -419,7 +419,7 @@ pub fn extract_level(handle: EVT_HANDLE) -> Result<u8> {
         unsafe {
             if v.Type == 2u32 {
                 // EvtVarTypeByte
-                Ok(v.Anonymous.ByteVal as u8)
+                Ok(v.Anonymous.ByteVal)
             } else {
                 Err(Error::Other(crate::error::OtherError::new(
                     "Level field is not byte",
@@ -436,7 +436,7 @@ pub fn extract_timestamp(handle: EVT_HANDLE) -> Result<SystemTime> {
             if v.Type == 17u32 {
                 // EvtVarTypeFileTime
                 let filetime = v.Anonymous.FileTimeVal;
-                let intervals = ((filetime as u64) * 100) as u64;
+                let intervals = filetime * 100;
                 let duration = Duration::from_nanos(intervals);
                 let epoch = UNIX_EPOCH - Duration::from_secs(11644473600); // Windows epoch
                 Ok(epoch + duration)
@@ -498,5 +498,5 @@ fn extract_variant_field(event_handle: EVT_HANDLE, field_index: usize) -> Result
         ))));
     }
 
-    Ok(variants[field_index].clone())
+    Ok(variants[field_index])
 }

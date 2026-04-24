@@ -5,6 +5,7 @@ use crate::error::{
     Error, FileOperationError, SecurityError, SecurityUnsupportedError, WindowsApiError,
 };
 use crate::security::{AccessMask, Ace, AceType, Dacl, InheritanceFlags, SecurityDescriptor, Sid};
+use crate::utils::{pwstr_to_string_len, to_utf16_nul};
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::{
     ConvertSecurityDescriptorToStringSecurityDescriptorW,
@@ -19,7 +20,7 @@ use windows::Win32::Security::{
 use windows::core::{PCWSTR, PWSTR};
 
 pub(crate) fn read_descriptor(path: &str) -> Result<SecurityDescriptor> {
-    let path_wide = to_wide(path);
+    let path_wide = to_utf16_nul(path);
     let mut security_descriptor = PSECURITY_DESCRIPTOR::default();
 
     let get_result = unsafe {
@@ -49,7 +50,7 @@ pub(crate) fn read_descriptor(path: &str) -> Result<SecurityDescriptor> {
     unsafe {
         ConvertSecurityDescriptorToStringSecurityDescriptorW(
             security_descriptor,
-            SDDL_REVISION_1 as u32,
+            SDDL_REVISION_1,
             OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
             &mut sddl,
             Some(&mut sddl_len),
@@ -63,7 +64,7 @@ pub(crate) fn read_descriptor(path: &str) -> Result<SecurityDescriptor> {
         })?;
     }
 
-    let sddl_str = pwstr_to_string(sddl, sddl_len as usize);
+    let sddl_str = pwstr_to_string_len(sddl, sddl_len as usize);
 
     unsafe {
         let _ = LocalFree(HLOCAL(sddl.0 as *mut core::ffi::c_void));
@@ -75,7 +76,7 @@ pub(crate) fn read_descriptor(path: &str) -> Result<SecurityDescriptor> {
 
 pub(crate) fn write_descriptor(path: &str, descriptor: &SecurityDescriptor) -> Result<()> {
     let sddl = descriptor_to_sddl(descriptor);
-    let sddl_wide = to_wide(&sddl);
+    let sddl_wide = to_utf16_nul(&sddl);
 
     let mut security_descriptor = PSECURITY_DESCRIPTOR::default();
     let mut security_descriptor_size = 0u32;
@@ -83,7 +84,7 @@ pub(crate) fn write_descriptor(path: &str, descriptor: &SecurityDescriptor) -> R
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             PCWSTR(sddl_wide.as_ptr()),
-            SDDL_REVISION_1 as u32,
+            SDDL_REVISION_1,
             &mut security_descriptor as *mut _,
             Some(&mut security_descriptor_size),
         )
@@ -188,7 +189,7 @@ pub(crate) fn write_descriptor(path: &str, descriptor: &SecurityDescriptor) -> R
         group_for_set = group_sid;
     }
 
-    let path_wide = to_wide(path);
+    let path_wide = to_utf16_nul(path);
 
     let result = unsafe {
         SetNamedSecurityInfoW(
@@ -409,7 +410,7 @@ fn sid_or_alias_to_sid(value: &str) -> Result<Sid> {
         .map_err(|_| Error::FileOperation(FileOperationError::new("sddl_sid", "map SID alias")))
 }
 
-fn extract_sddl_section<'a>(sddl: &'a str, section: char) -> Option<&'a str> {
+fn extract_sddl_section(sddl: &str, section: char) -> Option<&str> {
     let marker = format!("{}:", section);
     let start = sddl.find(&marker)? + marker.len();
 
@@ -425,18 +426,6 @@ fn extract_sddl_section<'a>(sddl: &'a str, section: char) -> Option<&'a str> {
     }
 
     Some(sddl[start..end].trim())
-}
-
-fn pwstr_to_string(pwstr: PWSTR, len: usize) -> String {
-    if pwstr.is_null() || len == 0 {
-        return String::new();
-    }
-    let slice = unsafe { std::slice::from_raw_parts(pwstr.0, len) };
-    String::from_utf16_lossy(slice)
-}
-
-fn to_wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 #[cfg(test)]

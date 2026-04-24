@@ -1,9 +1,10 @@
 use std::io;
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
 use windows::Win32::System::Pipes::CreatePipe;
 
+use crate::utils::OwnedHandle;
 use crate::{Error, Result};
 
 use super::security_attrs::NativePipeSecurityAttributes;
@@ -94,42 +95,19 @@ impl AnonymousPipeConfig {
 
         Ok((
             AnonymousPipeReader {
-                handle: OwnedAnonymousHandle::new(read_handle),
+                handle: OwnedHandle::new(read_handle),
             },
             AnonymousPipeWriter {
-                handle: OwnedAnonymousHandle::new(write_handle),
+                handle: OwnedHandle::new(write_handle),
             },
         ))
-    }
-}
-
-#[derive(Debug)]
-struct OwnedAnonymousHandle {
-    handle: HANDLE,
-}
-
-impl OwnedAnonymousHandle {
-    fn new(handle: HANDLE) -> Self {
-        Self { handle }
-    }
-
-    fn raw(&self) -> HANDLE {
-        self.handle
-    }
-}
-
-impl Drop for OwnedAnonymousHandle {
-    fn drop(&mut self) {
-        if !self.handle.is_invalid() && self.handle != INVALID_HANDLE_VALUE {
-            let _ = unsafe { CloseHandle(self.handle) };
-        }
     }
 }
 
 /// Read endpoint for an anonymous pipe.
 #[derive(Debug)]
 pub struct AnonymousPipeReader {
-    handle: OwnedAnonymousHandle,
+    handle: OwnedHandle,
 }
 
 impl AnonymousPipeReader {
@@ -151,7 +129,7 @@ impl io::Read for AnonymousPipeReader {
 /// Write endpoint for an anonymous pipe.
 #[derive(Debug)]
 pub struct AnonymousPipeWriter {
-    handle: OwnedAnonymousHandle,
+    handle: OwnedHandle,
 }
 
 impl AnonymousPipeWriter {

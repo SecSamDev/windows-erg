@@ -95,12 +95,15 @@ mod metrics;
 mod modules;
 mod peb;
 mod processes;
+mod inject;
+mod spawn;
 mod threads;
 mod tree;
 mod types;
 
 // Re-export public types
 pub use processes::Process;
+pub use spawn::{ProcessSpawner, SpawnedProcess};
 pub use types::{
     HostMemoryMetrics, HostMetrics, MemoryInfo, ModuleInfo, ProcessAccess, ProcessCpuTimes,
     ProcessId, ProcessInfo, ProcessMemoryMetrics, ProcessMetrics, ProcessParameters, ThreadId,

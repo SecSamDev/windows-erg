@@ -157,9 +157,8 @@ fn field_string(fields: &[EventField], names: &[&str]) -> Option<String> {
 }
 
 fn field_ip(fields: &[EventField], names: &[&str]) -> Option<IpAddr> {
-    match field_by_name(fields, names)? {
-        value => parse_ip_value(value),
-    }
+    let value = field_by_name(fields, names)?;
+    parse_ip_value(value)
 }
 
 fn field_ip_by_pattern(fields: &[EventField], source: bool) -> Option<IpAddr> {

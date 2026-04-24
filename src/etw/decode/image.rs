@@ -30,7 +30,7 @@ struct ImageCommon {
 /// for unsupported versions, opcodes, or truncated payloads.
 pub(crate) fn decode_image_parts(version: u8, opcode: u8, data: &[u8]) -> Option<DecodedEvent> {
     let parsed = match version {
-        2 | 3 | 4 => parse_v3(data),
+        2..=4 => parse_v3(data),
         _ => None,
     }?;
 

@@ -6,11 +6,14 @@ use super::types::{CpuSample, StackTrace, SystemProvider, ThreadContext, TraceEv
 use crate::Result;
 use crate::error::{Error, EtwConsumeError, EtwError, EtwProviderError, EtwSessionError};
 use crate::types::ProcessId;
+use crate::wait::Wait;
+use crate::utils::to_utf16_nul;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Duration;
 use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::System::Diagnostics::Etw::*;
 use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
@@ -48,7 +51,7 @@ fn extract_stack_trace(record: &EVENT_RECORD) -> Option<StackTrace> {
     };
 
     for item in items {
-        let ext_type = item.ExtType as u16;
+        let ext_type = item.ExtType;
         let is_stack32 = ext_type == EVENT_HEADER_EXT_TYPE_STACK_TRACE32 as u16;
         let is_stack64 = ext_type == EVENT_HEADER_EXT_TYPE_STACK_TRACE64 as u16;
         if !is_stack32 && !is_stack64 {
@@ -105,6 +108,7 @@ fn extract_cpu_sample(record: &EVENT_RECORD) -> CpuSample {
 /// `trace_callback_fn` for every event. We keep the `Arc<CallbackContext>` in a
 /// boxed allocation so the address stays stable for the full trace lifetime.
 struct CallbackContextGuard {
+    #[allow(clippy::redundant_allocation)]
     boxed_ctx: Box<Arc<CallbackContext>>,
 }
 
@@ -229,6 +233,9 @@ pub struct EventTrace {
     /// Background thread running `ProcessTrace` (blocks until `CloseTrace`).
     process_thread: Option<JoinHandle<()>>,
 
+    /// Internal stop signal that can be shared with external coordinators.
+    stop_signal: Wait,
+
     /// Owns callback context memory for ETW callback user-data pointer.
     _callback_ctx_guard: CallbackContextGuard,
 }
@@ -282,11 +289,45 @@ impl EventTrace {
         self.events_processed
     }
 
+    /// Get a clone of the stop signal for external cancellation coordination.
+    pub fn stop_handle(&self) -> Wait {
+        self.stop_signal.clone()
+    }
+
     /// Fetch the next batch of events into the output buffer.
     ///
     /// Clears `out_events` before filling it. Returns the number of events added.
     pub fn next_batch(&mut self, out_events: &mut Vec<TraceEvent>) -> Result<usize> {
         self.next_batch_with_filter(out_events, |_| true)
+    }
+
+    /// Fetch the next batch unless the session stop signal has been set.
+    ///
+    /// Returns `0` when stop was requested.
+    pub fn next_batch_or_stopped(&mut self, out_events: &mut Vec<TraceEvent>) -> Result<usize> {
+        if self.stop_signal.is_signaled()? {
+            out_events.clear();
+            return Ok(0);
+        }
+        self.next_batch(out_events)
+    }
+
+    /// Continuously drain batches until the stop signal is set.
+    ///
+    /// The output buffer is reused on each iteration.
+    pub fn run_until_stopped(
+        &mut self,
+        out_events: &mut Vec<TraceEvent>,
+        poll_interval: Duration,
+    ) -> Result<()> {
+        loop {
+            if self.stop_signal.is_signaled()? {
+                out_events.clear();
+                return Ok(());
+            }
+            let _ = self.next_batch(out_events)?;
+            std::thread::sleep(poll_interval);
+        }
     }
 
     /// Fetch the next batch of events, keeping only those that pass `filter`.
@@ -361,8 +402,10 @@ impl EventTrace {
             return Ok(());
         }
 
+        let _ = self.stop_signal.set();
+
         // 1. Stop the ETW session via ControlTraceW.
-        let name_wide: Vec<u16> = self.name.encode_utf16().chain(std::iter::once(0)).collect();
+        let name_wide = to_utf16_nul(&self.name);
 
         let mut properties_buffer =
             vec![0u8; std::mem::size_of::<EVENT_TRACE_PROPERTIES>() + (MAX_SESSION_NAME_LEN * 2)];
@@ -672,7 +715,7 @@ impl EventTraceBuilder {
         let enable_flags: u32 = if is_kernel_session {
             self.system_providers
                 .iter()
-                .fold(0u32, |acc, p| acc | p.to_trace_flags())
+                .fold(0u32, |acc, p| acc | p.trace_flags())
         } else {
             0
         };
@@ -765,7 +808,7 @@ impl EventTraceBuilder {
                     EnableTraceEx2(
                         session_handle,
                         provider_guid as *const GUID,
-                        EVENT_CONTROL_CODE_ENABLE_PROVIDER.0 as u32,
+                        EVENT_CONTROL_CODE_ENABLE_PROVIDER.0,
                         TRACE_LEVEL_VERBOSE as u8,
                         u64::MAX,
                         0,
@@ -841,12 +884,17 @@ impl EventTraceBuilder {
         let ctx_ptr = callback_ctx_guard.as_user_context_ptr();
 
         // Configure real-time trace consumption via OpenTraceW.
-        let mut log_file = EVENT_TRACE_LOGFILEW::default();
-        log_file.LoggerName = PWSTR(name_wide.as_ptr() as *mut u16);
-        log_file.Anonymous1.ProcessTraceMode =
-            PROCESS_TRACE_MODE_EVENT_RECORD | PROCESS_TRACE_MODE_REAL_TIME;
-        log_file.Anonymous2.EventRecordCallback = Some(trace_callback_fn);
-        log_file.Context = ctx_ptr;
+        let mut log_file = EVENT_TRACE_LOGFILEW {
+            LoggerName: PWSTR(name_wide.as_ptr() as *mut u16),
+            Anonymous1: EVENT_TRACE_LOGFILEW_0 {
+                ProcessTraceMode: PROCESS_TRACE_MODE_EVENT_RECORD | PROCESS_TRACE_MODE_REAL_TIME,
+            },
+            Anonymous2: EVENT_TRACE_LOGFILEW_1 {
+                EventRecordCallback: Some(trace_callback_fn),
+            },
+            Context: ctx_ptr,
+            ..Default::default()
+        };
 
         let trace_handle = unsafe { OpenTraceW(&mut log_file) };
         if trace_handle.Value == u64::MAX {
@@ -889,6 +937,7 @@ impl EventTraceBuilder {
             events_processed: 0,
             started: true,
             process_thread: Some(process_thread),
+            stop_signal: Wait::manual_reset(false)?,
             _callback_ctx_guard: callback_ctx_guard,
         })
     }
@@ -925,6 +974,7 @@ mod tests {
             events_processed: 0,
             started: false,
             process_thread: None,
+            stop_signal: Wait::manual_reset(false).expect("wait handle create"),
             _callback_ctx_guard: CallbackContextGuard::new(CallbackContext {
                 raw_sender: None,
                 decoded_sender: None,

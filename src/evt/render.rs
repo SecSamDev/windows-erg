@@ -174,9 +174,9 @@ fn render_event_values(event_handle: EVT_HANDLE) -> std::result::Result<Event, C
     // System properties are in fixed positions (0-9 are standard system fields)
     let mut event = Event::default();
 
-    if variants.len() > 0 {
+    if !variants.is_empty() {
         // Event ID (System/EventID)
-        if variants.len() > 0 {
+        if !variants.is_empty() {
             let variant = &variants[0];
             event.id = EventId::new(extract_u32_from_variant(variant).unwrap_or(0));
         }
@@ -316,23 +316,19 @@ fn parse_event_xml_with_quick_xml(xml_str: &str) -> std::result::Result<Event, C
                     // Handle elements with attributes
                     if tag_name == "Provider" {
                         for attr in e.attributes() {
-                            if let Ok(attr) = attr {
-                                if attr.key.as_ref() == b"Name" {
-                                    if let Ok(value) = String::from_utf8(attr.value.to_vec()) {
+                            if let Ok(attr) = attr
+                                && attr.key.as_ref() == b"Name"
+                                    && let Ok(value) = String::from_utf8(attr.value.to_vec()) {
                                         event.provider = intern_provider(&value);
                                     }
-                                }
-                            }
                         }
                     } else if tag_name == "TimeCreated" {
                         for attr in e.attributes() {
-                            if let Ok(attr) = attr {
-                                if attr.key.as_ref() == b"SystemTime" {
-                                    if let Ok(value) = String::from_utf8(attr.value.to_vec()) {
+                            if let Ok(attr) = attr
+                                && attr.key.as_ref() == b"SystemTime"
+                                    && let Ok(value) = String::from_utf8(attr.value.to_vec()) {
                                         event.timestamp = parse_iso8601_timestamp(&value);
                                     }
-                                }
-                            }
                         }
                     }
                 }
@@ -377,23 +373,21 @@ fn parse_event_xml_with_quick_xml(xml_str: &str) -> std::result::Result<Event, C
                 let tag_name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
 
                 if in_system && tag_name == "Execution" {
-                    for attr in e.attributes() {
-                        if let Ok(attr) = attr {
-                            let attr_name = String::from_utf8_lossy(attr.key.as_ref());
-                            if let Ok(value) = String::from_utf8(attr.value.to_vec()) {
-                                match attr_name.as_ref() {
-                                    "ProcessID" => {
-                                        if let Ok(pid) = value.parse::<u32>() {
-                                            event.process_id = Some(ProcessId::new(pid));
-                                        }
+                    for attr in e.attributes().flatten() {
+                        let attr_name = String::from_utf8_lossy(attr.key.as_ref());
+                        if let Ok(value) = String::from_utf8(attr.value.to_vec()) {
+                            match attr_name.as_ref() {
+                                "ProcessID" => {
+                                    if let Ok(pid) = value.parse::<u32>() {
+                                        event.process_id = Some(ProcessId::new(pid));
                                     }
-                                    "ThreadID" => {
-                                        if let Ok(tid) = value.parse::<u32>() {
-                                            event.thread_id = Some(ThreadId::new(tid));
-                                        }
-                                    }
-                                    _ => {}
                                 }
+                                "ThreadID" => {
+                                    if let Ok(tid) = value.parse::<u32>() {
+                                        event.thread_id = Some(ThreadId::new(tid));
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -530,7 +524,7 @@ fn extract_u8_from_variant(variant: &EVT_VARIANT) -> Option<u8> {
     unsafe {
         if variant.Type == 2u32 {
             // EvtVarTypeByte
-            Some(variant.Anonymous.ByteVal as u8)
+            Some(variant.Anonymous.ByteVal)
         } else {
             None
         }

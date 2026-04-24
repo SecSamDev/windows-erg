@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use windows_erg::pipes::{
     AnonymousPipeBuilder, NamedPipeClientBuilder, NamedPipeOpenMode, NamedPipeServerBuilder,
-    NamedPipeType, PipeName, PipeSecurityOptions, WaitHandle,
+    NamedPipeType, PipeName, PipeSecurityOptions, Wait,
 };
 use windows_erg::security::{AccessMask, Ace, AceType, Dacl, SecurityDescriptor, Sid};
 use windows_erg::{
@@ -266,7 +266,7 @@ fn server_connect_with_wait_interrupted() -> windows_erg::Result<()> {
         .build()?;
 
     let server = server_cfg.create()?;
-    let wait = WaitHandle::manual_reset(false)?;
+    let wait = Wait::manual_reset(false)?;
     wait.set()?;
     let err = server
         .connect_with_wait_timeout(&wait, Duration::from_secs(3))
@@ -298,7 +298,7 @@ fn server_connect_with_wait_object_interrupted() -> windows_erg::Result<()> {
         .build()?;
 
     let server = server_cfg.create()?;
-    let wait = WaitHandle::manual_reset(false)?;
+    let wait = Wait::manual_reset(false)?;
     wait.set()?;
 
     let err = server

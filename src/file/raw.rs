@@ -2,42 +2,17 @@ use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use windows::Win32::Foundation::{CloseHandle, ERROR_INSUFFICIENT_BUFFER, HANDLE};
+use windows::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
 
 use crate::Result;
 use crate::error::{Error, FileOperationError, InvalidParameterError};
+use crate::utils::OwnedHandle;
 
 use super::builder::RawFileBuilder;
 use super::win::{
     Buffer, PointerExtent, RetrievalPointersBuffer, get_drive_metadata, get_file_pointer_and_size,
     get_retrieval_pointers, move_disk_position, read_file_from_disk_pointer,
 };
-
-struct OwnedHandle {
-    handle: HANDLE,
-    close_on_drop: bool,
-}
-
-impl OwnedHandle {
-    fn new(handle: HANDLE, close_on_drop: bool) -> Self {
-        Self {
-            handle,
-            close_on_drop,
-        }
-    }
-
-    fn raw(&self) -> HANDLE {
-        self.handle
-    }
-}
-
-impl Drop for OwnedHandle {
-    fn drop(&mut self) {
-        if self.close_on_drop {
-            let _ = unsafe { CloseHandle(self.handle) };
-        }
-    }
-}
 
 /// Low-level reader for file content through raw disk cluster reads.
 ///
@@ -98,12 +73,12 @@ impl RawFile {
         let (file_metadata_handle, file_size) =
             get_file_pointer_and_size(&source_path, &mut work_buffer)?;
 
-        let metadata_handle = OwnedHandle::new(file_metadata_handle, true);
+        let metadata_handle = OwnedHandle::with_ownership(file_metadata_handle, true);
         let retrieval_pointers = get_retrieval_pointers(metadata_handle.raw(), &mut work_buffer)?;
 
         Ok(Self {
             source_path,
-            disk_handle: OwnedHandle::new(disk_handle, true),
+            disk_handle: OwnedHandle::with_ownership(disk_handle, true),
             file_size,
             retrieval_pointers,
             bytes_per_cluster: (bytes_per_sector * sectors_in_cluster) as usize,

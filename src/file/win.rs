@@ -12,11 +12,10 @@ use windows::core::{Error as WinError, PCWSTR};
 
 use crate::Result;
 use crate::error::{Error, FileOperationError, InvalidParameterError};
+use crate::utils::to_utf16_nul_in;
 
 pub(crate) fn encode_pcwstr(text: &str, out_buffer: &mut Vec<u16>) {
-    out_buffer.clear();
-    out_buffer.extend(text.encode_utf16());
-    out_buffer.push(0);
+    to_utf16_nul_in(text, out_buffer);
 }
 
 pub(crate) fn get_drive_and_disk(path: &Path) -> Result<(String, String)> {

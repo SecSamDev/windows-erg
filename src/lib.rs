@@ -37,6 +37,7 @@
 //! ## Modules
 //!
 //! - [`process`] - Process management (list, info, kill, spawn)
+//! - [`desktop`] - Desktop windows and tray icon operations
 //! - [`registry`] - Registry operations
 //! - [`evt`] - Windows Event Log querying and reading
 //! - [`etw`] - Event Tracing for Windows (ETW)
@@ -48,6 +49,7 @@
 #![cfg(windows)]
 
 pub mod error;
+pub mod desktop;
 pub mod etw;
 pub mod evt;
 pub mod file;
@@ -58,13 +60,16 @@ pub mod proxy;
 pub mod registry;
 pub mod security;
 pub mod service;
+pub mod system;
 pub mod types;
+/// Shared utility helpers for UTF-16/Wide conversions and owned Win32 handle RAII.
+pub mod utils;
 /// Shared wait-object primitives for cancellation and coordination.
 pub mod wait;
 
 pub use error::{Error, Result};
 pub use types::{ProcessId, ThreadId};
-pub use wait::WaitHandle;
+pub use wait::Wait;
 
 /// Check if the current process is running with elevated (administrator) privileges.
 ///

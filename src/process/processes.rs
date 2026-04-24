@@ -3,17 +3,19 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::Storage::FileSystem::QueryDosDeviceW;
 use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
 use windows::Win32::System::Threading::{
     GetCurrentProcess, GetExitCodeProcess, OpenProcess, PROCESS_QUERY_INFORMATION,
-    PROCESS_TERMINATE, TerminateProcess,
+    PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
 };
 use windows::core::PCWSTR;
 
 use super::types::{ProcessAccess, ProcessId};
 use crate::error::{Error, ProcessError, ProcessOpenError, Result};
+use crate::wait::Wait;
+use crate::utils::to_utf16_nul;
 
 // STILL_ACTIVE exit code constant
 const STILL_ACTIVE: u32 = 259;
@@ -30,7 +32,7 @@ fn init_device_path_cache() -> HashMap<Vec<u16>, char> {
 
     for drive_char in 'A'..='Z' {
         let drive = format!("{}:", drive_char);
-        let drive_wide: Vec<u16> = drive.encode_utf16().chain(std::iter::once(0)).collect();
+        let drive_wide = to_utf16_nul(&drive);
 
         // QueryDosDeviceW returns the device path for the drive
 
@@ -234,20 +236,86 @@ impl Process {
     ///
     /// Returns `None` if the process is still running.
     pub fn exit_code(&self) -> Result<Option<u32>> {
-        let mut exit_code = 0u32;
-        unsafe { GetExitCodeProcess(self.handle, &mut exit_code) }.map_err(|e| {
-            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
-                self.pid.as_u32(),
-                "Failed to get exit code",
-                e.code().0,
-            )))
-        })?;
+        let exit_code = self.get_exit_code_value()?;
 
         if exit_code == STILL_ACTIVE {
             Ok(None)
         } else {
             Ok(Some(exit_code))
         }
+    }
+
+    /// Wait until this process exits and return its final exit code.
+    pub fn wait_for_exit(&self) -> Result<u32> {
+        let wait_result = unsafe { WaitForSingleObject(self.handle, u32::MAX) };
+        if wait_result == WAIT_OBJECT_0 {
+            let exit_code = self.get_exit_code_value()?;
+            if exit_code == STILL_ACTIVE {
+                return Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
+                    self.pid.as_u32(),
+                    "Process wait completed but exit code is still active",
+                ))));
+            }
+            return Ok(exit_code);
+        }
+
+        if wait_result == WAIT_FAILED {
+            return Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
+                self.pid.as_u32(),
+                "Failed to wait for process exit",
+            ))));
+        }
+
+        Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
+            self.pid.as_u32(),
+            "Unexpected wait result while waiting for process exit",
+        ))))
+    }
+
+    /// Wait until this process exits or timeout elapses.
+    ///
+    /// Returns `Ok(Some(code))` when the process exits, `Ok(None)` on timeout.
+    pub fn wait_for_exit_timeout(&self, timeout: std::time::Duration) -> Result<Option<u32>> {
+        let wait_result = unsafe {
+            WaitForSingleObject(
+                self.handle,
+                timeout.as_millis().min(u32::MAX as u128) as u32,
+            )
+        };
+
+        if wait_result == WAIT_TIMEOUT {
+            return Ok(None);
+        }
+
+        if wait_result == WAIT_OBJECT_0 {
+            let exit_code = self.get_exit_code_value()?;
+            if exit_code == STILL_ACTIVE {
+                return Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
+                    self.pid.as_u32(),
+                    "Process wait completed but exit code is still active",
+                ))));
+            }
+            return Ok(Some(exit_code));
+        }
+
+        if wait_result == WAIT_FAILED {
+            return Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
+                self.pid.as_u32(),
+                "Failed to wait for process exit with timeout",
+            ))));
+        }
+
+        Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
+            self.pid.as_u32(),
+            "Unexpected wait result while waiting for process exit",
+        ))))
+    }
+
+    /// Borrow this process handle as a [`Wait`] object.
+    ///
+    /// The returned wait object does not own the process handle and will not close it on drop.
+    pub fn as_wait(&self) -> Wait {
+        Wait::from_handle_borrowed(self.handle)
     }
 
     /// Terminate the process with exit code 1.
@@ -282,6 +350,18 @@ impl Process {
     /// The handle must not outlive the Process instance.
     pub unsafe fn as_raw_handle(&self) -> HANDLE {
         self.handle
+    }
+
+    fn get_exit_code_value(&self) -> Result<u32> {
+        let mut exit_code = 0u32;
+        unsafe { GetExitCodeProcess(self.handle, &mut exit_code) }.map_err(|e| {
+            Error::Process(ProcessError::OpenFailed(ProcessOpenError::with_code(
+                self.pid.as_u32(),
+                "Failed to get exit code",
+                e.code().0,
+            )))
+        })?;
+        Ok(exit_code)
     }
 }
 

@@ -1,9 +1,10 @@
 use std::borrow::Cow;
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::HANDLE;
 
 use crate::error::InvalidParameterError;
 use crate::security::SecurityDescriptor;
+use crate::utils::OwnedHandle;
 use crate::{Error, Result};
 
 /// Canonical named pipe path.
@@ -108,41 +109,10 @@ impl Default for PipeSecurityOptions {
     }
 }
 
-#[derive(Debug)]
-struct OwnedPipeHandle {
-    handle: HANDLE,
-    close_on_drop: bool,
-}
-
-impl OwnedPipeHandle {
-    fn new(handle: HANDLE, close_on_drop: bool) -> Self {
-        Self {
-            handle,
-            close_on_drop,
-        }
-    }
-
-    fn raw(&self) -> HANDLE {
-        self.handle
-    }
-
-    fn set_close_on_drop(&mut self, close_on_drop: bool) {
-        self.close_on_drop = close_on_drop;
-    }
-}
-
-impl Drop for OwnedPipeHandle {
-    fn drop(&mut self) {
-        if self.close_on_drop && !self.handle.is_invalid() && self.handle != INVALID_HANDLE_VALUE {
-            let _ = unsafe { CloseHandle(self.handle) };
-        }
-    }
-}
-
 /// Server-side named pipe endpoint handle.
 #[derive(Debug)]
 pub struct PipeServerEndpoint {
-    handle: OwnedPipeHandle,
+    handle: OwnedHandle,
     pipe_name: PipeName,
     open_mode: NamedPipeOpenMode,
     pipe_type: NamedPipeType,
@@ -159,7 +129,7 @@ impl PipeServerEndpoint {
         pipe_type: NamedPipeType,
     ) -> Self {
         Self {
-            handle: OwnedPipeHandle::new(handle, close_on_drop),
+            handle: OwnedHandle::with_ownership(handle, close_on_drop),
             pipe_name,
             open_mode,
             pipe_type,
@@ -195,7 +165,7 @@ impl PipeServerEndpoint {
 /// Client-side named pipe endpoint handle.
 #[derive(Debug)]
 pub struct PipeClientEndpoint {
-    handle: OwnedPipeHandle,
+    handle: OwnedHandle,
     pipe_name: PipeName,
     open_mode: NamedPipeOpenMode,
 }
@@ -209,7 +179,7 @@ impl PipeClientEndpoint {
         open_mode: NamedPipeOpenMode,
     ) -> Self {
         Self {
-            handle: OwnedPipeHandle::new(handle, close_on_drop),
+            handle: OwnedHandle::with_ownership(handle, close_on_drop),
             pipe_name,
             open_mode,
         }

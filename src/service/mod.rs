@@ -3,6 +3,8 @@
 //! This module provides ergonomic wrappers around the Windows Service Control
 //! Manager (SCM) APIs for querying and controlling services.
 
+#![allow(clippy::module_inception)]
+
 mod manager;
 mod service;
 mod status;

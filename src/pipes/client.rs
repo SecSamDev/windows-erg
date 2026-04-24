@@ -10,6 +10,7 @@ use windows::Win32::System::Pipes::WaitNamedPipeW;
 use windows::core::PCWSTR;
 
 use crate::error::InvalidParameterError;
+use crate::utils::to_utf16_nul;
 use crate::{Error, Result};
 
 use super::error_map::map_pipe_windows_error;
@@ -101,7 +102,7 @@ impl NamedPipeClientConfig {
 
     /// Connect to the target named pipe endpoint.
     pub fn connect(&self) -> Result<NamedPipeClient> {
-        let pipe_name_wide = to_wide(self.pipe_name.as_str());
+        let pipe_name_wide = to_utf16_nul(self.pipe_name.as_str());
         let timeout_ms = self.connect_timeout.as_millis().min(u32::MAX as u128) as u32;
 
         let waited = unsafe { WaitNamedPipeW(PCWSTR(pipe_name_wide.as_ptr()), timeout_ms) };
@@ -212,6 +213,3 @@ fn to_client_access(open_mode: NamedPipeOpenMode) -> u32 {
     }
 }
 
-fn to_wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(std::iter::once(0)).collect()
-}

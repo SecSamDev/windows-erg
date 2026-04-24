@@ -220,6 +220,8 @@ pub mod render;
 pub mod types;
 
 use crate::error::{Error, EventLogError, EventLogQueryError, Result};
+use crate::wait::Wait;
+use crate::utils::to_utf16_nul;
 use query::QueryBuilder;
 use std::path::Path;
 use types::{ChannelFilter, Event, EventQueryResult, RenderFormat};
@@ -248,7 +250,7 @@ impl EventLog {
             EvtOpenLog(
                 EVT_HANDLE::default(), // Local computer
                 PWSTR(channel_wide.as_ptr() as *mut u16),
-                EvtOpenChannelPath.0 as u32,
+                EvtOpenChannelPath.0,
             )
         }
         .map_err(|_| {
@@ -274,13 +276,13 @@ impl EventLog {
             )))
         })?;
 
-        let path_wide: Vec<u16> = path_str.encode_utf16().chain(std::iter::once(0)).collect();
+        let path_wide = to_utf16_nul(path_str);
 
         let handle = unsafe {
             EvtOpenLog(
                 EVT_HANDLE::default(), // Local computer
                 PWSTR(path_wide.as_ptr() as *mut u16),
-                EvtOpenFilePath.0 as u32,
+                EvtOpenFilePath.0,
             )
         }
         .map_err(|_| {
@@ -355,7 +357,7 @@ impl EventLog {
     /// Returns an EventQuery handle for batch iteration with buffer reuse.
     /// Use `query_stream()` for processing large logs efficiently.
     pub fn query_stream(&self, xpath: &str) -> Result<EventQuery> {
-        let xpath_wide: Vec<u16> = xpath.encode_utf16().chain(std::iter::once(0)).collect();
+        let xpath_wide = to_utf16_nul(xpath);
 
         let channel_wide: Vec<u16> = self
             .channel_or_path
@@ -364,9 +366,9 @@ impl EventLog {
             .collect();
 
         let flags = if self.is_file {
-            EvtQueryFilePath.0 as u32
+            EvtQueryFilePath.0
         } else {
-            EvtQueryChannelPath.0 as u32
+            EvtQueryChannelPath.0
         };
 
         let query_handle = unsafe {
@@ -387,6 +389,7 @@ impl EventLog {
         Ok(EventQuery {
             handle: query_handle,
             batch_buffer: vec![0isize; 64], // Changed to 0isize for EvtNext buffer
+            batch_timeout_ms: 1000,
             render_format: RenderFormat::Values,
             include_event_data: false,
             parse_message: false,
@@ -410,7 +413,7 @@ impl EventLog {
         // Fetch all batches
         let mut batch = Vec::with_capacity(64);
         while query.next_batch(&mut batch)? > 0 {
-            result.events.extend(batch.drain(..));
+            result.events.append(&mut batch);
         }
 
         result.corrupted = query.corrupted.clone();
@@ -434,6 +437,7 @@ impl Drop for EventLog {
 pub struct EventQuery {
     handle: EVT_HANDLE,
     batch_buffer: Vec<isize>, // Changed from Vec<EVT_HANDLE> to Vec<isize> for EvtNext
+    batch_timeout_ms: u32,
     render_format: RenderFormat,
     include_event_data: bool,
     parse_message: bool,
@@ -446,6 +450,11 @@ pub struct EventQuery {
 }
 
 impl EventQuery {
+    /// Set timeout used by `EvtNext` for each batch retrieval call.
+    pub fn set_batch_timeout(&mut self, timeout: std::time::Duration) {
+        self.batch_timeout_ms = timeout.as_millis().min(u32::MAX as u128) as u32;
+    }
+
     /// Enable EventData extraction (opt-in).
     ///
     /// When enabled, events will have their `data` field populated with EventData key-value pairs.
@@ -478,6 +487,22 @@ impl EventQuery {
         self.next_batch_with_filter(out_events, |_| true)
     }
 
+    /// Fetch the next batch unless a cancel wait object is already signaled.
+    ///
+    /// Returns `0` when cancellation is requested.
+    pub fn next_batch_or_cancel(
+        &mut self,
+        out_events: &mut Vec<Event>,
+        cancel: &Wait,
+    ) -> Result<usize> {
+        if cancel.is_signaled()? {
+            out_events.clear();
+            return Ok(0);
+        }
+
+        self.next_batch(out_events)
+    }
+
     /// Fetch next batch with filtering applied during enumeration.
     ///
     /// The filter function is called for each parsed event;
@@ -497,7 +522,7 @@ impl EventQuery {
             EvtNext(
                 self.handle,
                 self.batch_buffer.as_mut_slice(),
-                1000, // 1 second timeout
+                self.batch_timeout_ms,
                 0,
                 &mut returned,
             )
@@ -598,7 +623,7 @@ impl EventQuery {
             EvtNext(
                 self.handle,
                 self.batch_buffer.as_mut_slice(),
-                1000,
+                self.batch_timeout_ms,
                 0,
                 &mut returned,
             )
@@ -675,7 +700,7 @@ impl EventQuery {
             EvtNext(
                 self.handle,
                 self.batch_buffer.as_mut_slice(),
-                1000,
+                self.batch_timeout_ms,
                 0,
                 &mut returned,
             )
@@ -773,7 +798,7 @@ impl EventQuery {
             EvtNext(
                 self.handle,
                 self.batch_buffer.as_mut_slice(),
-                1000,
+                self.batch_timeout_ms,
                 0,
                 &mut returned,
             )

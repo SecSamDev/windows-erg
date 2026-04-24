@@ -1,0 +1,295 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Job 1: Build + lint (fast feedback, no run)
+  # ──────────────────────────────────────────────
+  build:
+    name: Build & Lint
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo check (default features)
+        run: cargo check --all-targets
+
+      - name: cargo check (all features)
+        run: cargo check --all-targets --features full
+
+      - name: cargo clippy (default features)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo clippy (all features)
+        run: cargo clippy --all-targets --features full -- -D warnings
+
+  # ──────────────────────────────────────────────
+  # Job 2: Unit + integration tests (non-admin)
+  # Runs all lib tests and integration tests that
+  # do not require elevated privileges.
+  # #[ignore] tests (ETW, raw_file) are excluded.
+  # ──────────────────────────────────────────────
+  test:
+    name: Tests (non-admin)
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: cargo test --lib (default features)
+        run: cargo test --lib
+
+      - name: cargo test --lib (all features)
+        run: cargo test --lib --features full
+
+      - name: cargo test --tests (integration tests, excludes #[ignore])
+        # pipes, service, security_permissions, process_wait_any run here.
+        # etw_integration and raw_file_integration are #[ignore] and are excluded.
+        run: cargo test --tests
+
+  # ──────────────────────────────────────────────
+  # Job 3: Example compile check (all 35 examples)
+  # Compiles every example but does not run them.
+  # Catches broken imports and API usage regressions
+  # without executing long-running or side-effect code.
+  # ──────────────────────────────────────────────
+  examples-compile:
+    name: Examples (compile only)
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Compile all examples (default features)
+        run: cargo build --examples
+
+      - name: Compile all examples (all features)
+        run: cargo build --examples --features full
+
+  # ──────────────────────────────────────────────
+  # Job 4: Example run — Phase 1 (safe auto-run)
+  # 17 non-admin, side-effect-free, self-terminating
+  # examples used as integration-style smoke tests.
+  # Built once in release mode, run with 1-min timeout.
+  # ──────────────────────────────────────────────
+  examples-phase1:
+    name: Examples Phase 1 (safe auto-run)
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build all Phase 1 examples (release)
+        run: cargo build --examples --release
+
+      - name: system_snapshot
+        run: cargo run --example system_snapshot --release
+        timeout-minutes: 1
+
+      - name: process_basics
+        run: cargo run --example process_basics --release
+        timeout-minutes: 1
+
+      - name: process_metrics
+        run: cargo run --example process_metrics --release
+        timeout-minutes: 1
+
+      - name: process_mitigation
+        run: cargo run --example process_mitigation --release
+        timeout-minutes: 1
+
+      - name: process_monitoring
+        run: cargo run --example process_monitoring --release
+        timeout-minutes: 1
+
+      - name: desktop_windows
+        run: cargo run --example desktop_windows --release
+        timeout-minutes: 1
+
+      - name: wait_multi_object
+        run: cargo run --example wait_multi_object --release
+        timeout-minutes: 1
+
+      - name: security_permissions
+        run: cargo run --example security_permissions --release
+        timeout-minutes: 1
+
+      - name: registry_basics
+        run: cargo run --example registry_basics --release
+        timeout-minutes: 1
+
+      - name: registry_convenience
+        run: cargo run --example registry_convenience --release
+        timeout-minutes: 1
+
+      - name: registry_enumerate
+        run: cargo run --example registry_enumerate --release
+        timeout-minutes: 1
+
+      - name: registry_operations
+        run: cargo run --example registry_operations --release
+        timeout-minutes: 1
+
+      - name: registry_safe_access
+        run: cargo run --example registry_safe_access --release
+        timeout-minutes: 1
+
+      - name: registry_write
+        run: cargo run --example registry_write --release
+        timeout-minutes: 1
+
+      - name: proxy_system
+        run: cargo run --example proxy_system --release
+        timeout-minutes: 1
+
+      - name: proxy_for_url
+        run: cargo run --example proxy_for_url --release
+        timeout-minutes: 1
+
+      - name: service_enumerate
+        run: cargo run --example service_enumerate --release
+        timeout-minutes: 1
+
+  # ──────────────────────────────────────────────
+  # Job 5: Example run — Phase 2 (conditional)
+  # Event log examples. No admin needed but results
+  # vary by machine state (empty logs = 0 events is OK).
+  # continue-on-error: true so CI stays green on
+  # restricted runners; failures are surfaced as warnings.
+  # evt_query_basic excluded (Security log = admin only).
+  # ──────────────────────────────────────────────
+  examples-phase2:
+    name: Examples Phase 2 (event log, best-effort)
+    runs-on: windows-latest
+    needs: examples-phase1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: evt_custom_parsing
+        run: cargo run --example evt_custom_parsing
+        timeout-minutes: 1
+        continue-on-error: true
+
+      - name: evt_filter
+        run: cargo run --example evt_filter
+        timeout-minutes: 1
+        continue-on-error: true
+
+      - name: evt_streaming
+        run: cargo run --example evt_streaming
+        timeout-minutes: 1
+        continue-on-error: true
+
+      - name: evt_serde (serde feature)
+        run: cargo run --example evt_serde --features serde
+        timeout-minutes: 1
+        continue-on-error: true
+
+  # ──────────────────────────────────────────────
+  # Job 6: MSRV
+  # Validates the minimum supported Rust version
+  # declared in Cargo.toml (rust-version = "1.90").
+  # ──────────────────────────────────────────────
+  msrv:
+    name: MSRV (1.90)
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust 1.90
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.90"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-msrv-
+
+      - name: cargo check on MSRV
+        run: cargo check --all-targets

@@ -332,13 +332,17 @@ impl ProcessAccess {
     pub(crate) fn to_windows(self) -> PROCESS_ACCESS_RIGHTS {
         use windows::Win32::System::Threading::*;
 
+        const PROCESS_SYNCHRONIZE: PROCESS_ACCESS_RIGHTS = PROCESS_ACCESS_RIGHTS(0x0010_0000);
+
         match self {
-            ProcessAccess::QueryInformation => PROCESS_QUERY_INFORMATION,
-            ProcessAccess::QueryLimitedInformation => PROCESS_QUERY_LIMITED_INFORMATION,
-            ProcessAccess::VmRead => PROCESS_VM_READ,
-            ProcessAccess::VmWrite => PROCESS_VM_WRITE,
-            ProcessAccess::Terminate => PROCESS_TERMINATE,
-            ProcessAccess::CreateThread => PROCESS_CREATE_THREAD,
+            ProcessAccess::QueryInformation => PROCESS_QUERY_INFORMATION | PROCESS_SYNCHRONIZE,
+            ProcessAccess::QueryLimitedInformation => {
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE
+            }
+            ProcessAccess::VmRead => PROCESS_VM_READ | PROCESS_SYNCHRONIZE,
+            ProcessAccess::VmWrite => PROCESS_VM_WRITE | PROCESS_SYNCHRONIZE,
+            ProcessAccess::Terminate => PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
+            ProcessAccess::CreateThread => PROCESS_CREATE_THREAD | PROCESS_SYNCHRONIZE,
             ProcessAccess::AllAccess => PROCESS_ALL_ACCESS,
             ProcessAccess::Custom(rights) => rights,
         }

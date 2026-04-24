@@ -9,7 +9,7 @@
 
 use std::borrow::Cow;
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::SystemServices::{
     PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY, PROCESS_MITIGATION_CHILD_PROCESS_POLICY,
     PROCESS_MITIGATION_DYNAMIC_CODE_POLICY, PROCESS_MITIGATION_IMAGE_LOAD_POLICY,
@@ -24,6 +24,7 @@ use windows::Win32::System::Threading::{
 
 use crate::error::{AccessDeniedError, Error, MitigationError, MitigationOperationError, Result};
 use crate::types::ProcessId;
+use crate::utils::OwnedHandle;
 
 const BINARY_SIGNED_MICROSOFT_SIGNED_ONLY: u32 = 0x1;
 
@@ -163,6 +164,82 @@ impl MitigationPlan {
 
         Ok(())
     }
+
+    /// Emit compile-time linker directives for enabled mitigations.
+    ///
+    /// This method prints `cargo:rustc-link-arg` directives to stdout, intended for use
+    /// in a build.rs script. Each linker directive enables binary-level protections on
+    /// the compiled executable.
+    ///
+    /// # Supported Mitigations
+    ///
+    /// Only mitigations with direct binary-level equivalents emit directives:
+    /// - `MicrosoftSignedOnly` → `/DEPENDENTLOADFLAG:0x800` + `/INTEGRITYCHECK`
+    /// - `DisableDynamicCode` → `/guard:cf` (Control Flow Guard)
+    /// - `RestrictPayload` → `/HIGHENTROPYVA` (High Entropy ASLR)
+    ///
+    /// The following are runtime-only and produce no compile-time output:
+    /// - `BlockRemoteImages`, `PreferSystem32Images`, `BlockChildProcessCreation`
+    ///
+    /// # Example (in build.rs)
+    ///
+    /// ```no_run
+    /// use windows_erg::mitigation::{MitigationPlan, ProcessMitigation};
+    ///
+    /// let plan = MitigationPlan::new()
+    ///     .enable(ProcessMitigation::DisableDynamicCode)
+    ///     .enable(ProcessMitigation::MicrosoftSignedOnly);
+    ///
+    /// plan.emit_compile_time();
+    /// ```
+    pub fn emit_compile_time(&self) {
+        self.emit_compile_time_with_compat(false);
+    }
+
+    /// Emit compile-time linker directives with optional CET Shadow Stack support.
+    ///
+    /// Similar to [`emit_compile_time`], but optionally adds `/CETCOMPAT` for
+    /// hardware-enforced stack protection (Control-flow Enforcement Technology).
+    /// Requires Windows 11+ and compatible CPU.
+    ///
+    /// # Arguments
+    ///
+    /// * `enable_compat` - If `true`, additionally emits `/CETCOMPAT`
+    ///
+    /// # Example (in build.rs)
+    ///
+    /// ```no_run
+    /// use windows_erg::mitigation::{MitigationPlan, ProcessMitigation};
+    ///
+    /// let plan = MitigationPlan::new()
+    ///     .enable(ProcessMitigation::DisableDynamicCode);
+    ///
+    /// plan.emit_compile_time_with_compat(true);
+    /// ```
+    pub fn emit_compile_time_with_compat(&self, enable_compat: bool) {
+        for mitigation in &self.mitigations {
+            match mitigation {
+                ProcessMitigation::MicrosoftSignedOnly => {
+                    println!("cargo:rustc-link-arg=/DEPENDENTLOADFLAG:0x800");
+                    println!("cargo:rustc-link-arg=/INTEGRITYCHECK");
+                }
+                ProcessMitigation::DisableDynamicCode => {
+                    println!("cargo:rustc-link-arg=/guard:cf");
+                }
+                ProcessMitigation::RestrictPayload => {
+                    println!("cargo:rustc-link-arg=/HIGHENTROPYVA");
+                }
+                // Runtime-only mitigations: no compile-time equivalent
+                ProcessMitigation::BlockRemoteImages
+                | ProcessMitigation::PreferSystem32Images
+                | ProcessMitigation::BlockChildProcessCreation => {}
+            }
+        }
+
+        if enable_compat {
+            println!("cargo:rustc-link-arg=/CETCOMPAT");
+        }
+    }
 }
 
 /// Query mitigation status for the current process.
@@ -172,8 +249,8 @@ pub fn query_current() -> Result<ProcessMitigationStatus> {
 
 /// Query mitigation status for a specific process.
 pub fn query_process(process_id: ProcessId) -> Result<ProcessMitigationStatus> {
-    let process = QueryProcessHandle::open(process_id)?;
-    query_from_handle(process_id, process.handle)
+    let process = open_query_process_handle(process_id)?;
+    query_from_handle(process_id, process.raw())
 }
 
 fn apply_single_mitigation(mitigation: ProcessMitigation) -> Result<()> {
@@ -274,7 +351,7 @@ fn apply_payload_mitigation() -> Result<()> {
     }
 
     Err(map_windows_apply_error(
-        last_error.unwrap_or_else(|| windows::core::Error::from_win32()),
+        last_error.unwrap_or_else(windows::core::Error::from_win32),
         "payload_restriction",
     ))
 }
@@ -418,43 +495,22 @@ fn map_windows_query_error(
     ))
 }
 
-struct QueryProcessHandle {
-    handle: HANDLE,
-    close_on_drop: bool,
-}
-
-impl QueryProcessHandle {
-    fn open(process_id: ProcessId) -> Result<Self> {
-        let current = ProcessId::new(unsafe { GetCurrentProcessId() });
-        if process_id == current {
-            return Ok(Self {
-                handle: unsafe { GetCurrentProcess() },
-                close_on_drop: false,
-            });
-        }
-
-        let handle = unsafe {
-            OpenProcess(
-                PROCESS_QUERY_LIMITED_INFORMATION,
-                false,
-                process_id.as_u32(),
-            )
-        }
-        .map_err(|e| map_windows_query_error(e, "open_process", process_id))?;
-
-        Ok(Self {
-            handle,
-            close_on_drop: true,
-        })
+fn open_query_process_handle(process_id: ProcessId) -> Result<OwnedHandle> {
+    let current = ProcessId::new(unsafe { GetCurrentProcessId() });
+    if process_id == current {
+        return Ok(OwnedHandle::borrowed(unsafe { GetCurrentProcess() }));
     }
-}
 
-impl Drop for QueryProcessHandle {
-    fn drop(&mut self) {
-        if self.close_on_drop {
-            let _ = unsafe { CloseHandle(self.handle) };
-        }
+    let handle = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION,
+            false,
+            process_id.as_u32(),
+        )
     }
+    .map_err(|e| map_windows_query_error(e, "open_process", process_id))?;
+
+    Ok(OwnedHandle::new(handle))
 }
 
 #[cfg(test)]

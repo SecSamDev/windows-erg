@@ -51,7 +51,7 @@ pub enum SystemProvider {
 
 impl SystemProvider {
     /// Get the `EVENT_TRACE_FLAG` bitmask for this provider.
-    pub(crate) fn to_trace_flags(&self) -> u32 {
+    pub(crate) fn trace_flags(self) -> u32 {
         use windows::Win32::System::Diagnostics::Etw::*;
         match self {
             SystemProvider::Process => (EVENT_TRACE_FLAG_PROCESS | EVENT_TRACE_FLAG_THREAD).0,

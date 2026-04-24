@@ -54,6 +54,9 @@ pub enum Error {
     /// A pipe operation error.
     Pipe(PipeError),
 
+    /// A desktop/windowing operation error.
+    Desktop(DesktopError),
+
     /// A generic error with a message.
     Other(OtherError),
 }
@@ -76,6 +79,7 @@ impl fmt::Display for Error {
             Error::Security(e) => write!(f, "{}", e),
             Error::FileOperation(e) => write!(f, "{}", e),
             Error::Pipe(e) => write!(f, "{}", e),
+            Error::Desktop(e) => write!(f, "{}", e),
             Error::Other(e) => write!(f, "{}", e),
         }
     }
@@ -624,6 +628,113 @@ impl fmt::Display for OtherError {
 }
 
 impl std::error::Error for OtherError {}
+
+// ============================================================================
+// Desktop Errors
+// ============================================================================
+
+/// Desktop and windowing errors.
+#[derive(Debug)]
+pub enum DesktopError {
+    /// Desktop operation failed.
+    OperationFailed(DesktopOperationError),
+
+    /// Window not found.
+    WindowNotFound(WindowNotFoundError),
+}
+
+impl fmt::Display for DesktopError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DesktopError::OperationFailed(e) => write!(f, "{}", e),
+            DesktopError::WindowNotFound(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl std::error::Error for DesktopError {}
+
+/// Desktop operation failure details.
+#[derive(Debug)]
+pub struct DesktopOperationError {
+    /// Operation that failed.
+    pub operation: Cow<'static, str>,
+    /// Target resource involved in the operation.
+    pub target: Cow<'static, str>,
+    /// Optional Windows error code.
+    pub error_code: Option<i32>,
+}
+
+impl DesktopOperationError {
+    /// Create a new desktop operation error.
+    pub fn new(
+        operation: impl Into<Cow<'static, str>>,
+        target: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        DesktopOperationError {
+            operation: operation.into(),
+            target: target.into(),
+            error_code: None,
+        }
+    }
+
+    /// Create a desktop operation error with a Windows error code.
+    pub fn with_code(
+        operation: impl Into<Cow<'static, str>>,
+        target: impl Into<Cow<'static, str>>,
+        error_code: i32,
+    ) -> Self {
+        DesktopOperationError {
+            operation: operation.into(),
+            target: target.into(),
+            error_code: Some(error_code),
+        }
+    }
+}
+
+impl fmt::Display for DesktopOperationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(code) = self.error_code {
+            write!(
+                f,
+                "Desktop operation '{}' failed for '{}' (error code: 0x{:08X})",
+                self.operation, self.target, code
+            )
+        } else {
+            write!(
+                f,
+                "Desktop operation '{}' failed for '{}'",
+                self.operation, self.target
+            )
+        }
+    }
+}
+
+impl std::error::Error for DesktopOperationError {}
+
+/// Window not found details.
+#[derive(Debug)]
+pub struct WindowNotFoundError {
+    /// The window identifier that was not found.
+    pub identifier: Cow<'static, str>,
+}
+
+impl WindowNotFoundError {
+    /// Create a new window not found error.
+    pub fn new(identifier: impl Into<Cow<'static, str>>) -> Self {
+        WindowNotFoundError {
+            identifier: identifier.into(),
+        }
+    }
+}
+
+impl fmt::Display for WindowNotFoundError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Window not found: {}", self.identifier)
+    }
+}
+
+impl std::error::Error for WindowNotFoundError {}
 
 // ============================================================================
 // Security Errors
@@ -1338,6 +1449,12 @@ pub enum ProcessError {
 
     /// Invalid process ID.
     InvalidProcessId,
+
+    /// DLL injection failed.
+    InjectionFailed(InjectionFailedError),
+
+    /// DLL is already injected into the target process.
+    AlreadyInjected(AlreadyInjectedError),
 }
 
 impl fmt::Display for ProcessError {
@@ -1348,6 +1465,8 @@ impl fmt::Display for ProcessError {
             ProcessError::OpenFailed(e) => write!(f, "{}", e),
             ProcessError::SpawnFailed(e) => write!(f, "{}", e),
             ProcessError::InvalidProcessId => write!(f, "Invalid process ID"),
+            ProcessError::InjectionFailed(e) => write!(f, "{}", e),
+            ProcessError::AlreadyInjected(e) => write!(f, "{}", e),
         }
     }
 }
@@ -1523,6 +1642,88 @@ impl fmt::Display for ProcessSpawnError {
 }
 
 impl std::error::Error for ProcessSpawnError {}
+
+/// DLL injection failed error.
+#[derive(Debug)]
+pub struct InjectionFailedError {
+    /// The target process ID.
+    pub pid: u32,
+    /// Reason for failure.
+    pub reason: Cow<'static, str>,
+    /// Windows error code if available.
+    pub error_code: Option<i32>,
+}
+
+impl InjectionFailedError {
+    /// Create a new injection failed error.
+    pub fn new(pid: u32, reason: impl Into<Cow<'static, str>>) -> Self {
+        InjectionFailedError {
+            pid,
+            reason: reason.into(),
+            error_code: None,
+        }
+    }
+
+    /// Create an injection failed error with a Windows error code.
+    pub fn with_code(pid: u32, reason: impl Into<Cow<'static, str>>, error_code: i32) -> Self {
+        InjectionFailedError {
+            pid,
+            reason: reason.into(),
+            error_code: Some(error_code),
+        }
+    }
+}
+
+impl fmt::Display for InjectionFailedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(code) = self.error_code {
+            write!(
+                f,
+                "DLL injection into process {} failed: {} (error code: 0x{:08X})",
+                self.pid, self.reason, code
+            )
+        } else {
+            write!(
+                f,
+                "DLL injection into process {} failed: {}",
+                self.pid, self.reason
+            )
+        }
+    }
+}
+
+impl std::error::Error for InjectionFailedError {}
+
+/// DLL already injected into target process error.
+#[derive(Debug)]
+pub struct AlreadyInjectedError {
+    /// The target process ID.
+    pub pid: u32,
+    /// The DLL name or path that is already loaded.
+    pub dll_name: Cow<'static, str>,
+}
+
+impl AlreadyInjectedError {
+    /// Create a new already-injected error.
+    pub fn new(pid: u32, dll_name: impl Into<Cow<'static, str>>) -> Self {
+        AlreadyInjectedError {
+            pid,
+            dll_name: dll_name.into(),
+        }
+    }
+}
+
+impl fmt::Display for AlreadyInjectedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "DLL '{}' is already loaded in process {}",
+            self.dll_name, self.pid
+        )
+    }
+}
+
+impl std::error::Error for AlreadyInjectedError {}
 
 // ============================================================================
 // Thread Errors

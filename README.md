@@ -38,6 +38,7 @@ windows-erg = "0.1"
 ## Core Modules
 
 - process: process and thread enumeration, process tree operations, module inspection
+- desktop: desktop window enumeration, tray icon lifecycle, tray balloon notifications
 - registry: key/value operations with ergonomic typed access
 - evt: Windows Event Log query and rendering
 - etw: ETW session and event consumption support
@@ -164,6 +165,8 @@ See examples:
 - examples/process_monitoring.rs
 - examples/process_tree.rs
 - examples/process_mitigation.rs
+- examples/desktop_windows.rs
+- examples/desktop_tray_notification.rs
 - examples/registry_basics.rs
 - examples/registry_operations.rs
 - examples/registry_write.rs
@@ -194,6 +197,94 @@ Result<T, windows_erg::Error>
 
 The crate uses structured error types (see src/error.rs), not string-only error payloads.
 
+## Testing
+
+### Running Examples
+
+Examples are organized into three buckets based on privilege level, runtime behavior, and side effects.
+
+#### Phase 1: Default Auto-Run (17 examples, ~8s, non-admin friendly)
+
+Quick sanity check for core APIs. No side effects, no special privileges needed:
+
+```powershell
+$examples = @(
+  "process_basics", "process_metrics", "process_mitigation", "process_monitoring",
+  "desktop_windows", "system_snapshot", "wait_multi_object", "security_permissions",
+  "registry_basics", "registry_convenience", "registry_enumerate", "registry_operations",
+  "registry_safe_access", "registry_write", "proxy_system", "proxy_for_url", "service_enumerate"
+)
+
+foreach ($ex in $examples) {
+  cargo run --example $ex 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { Write-Host "FAILED: $ex" -ForegroundColor Red; break }
+  Write-Host "PASSED: $ex" -ForegroundColor Green
+}
+```
+
+#### Phase 2: Conditional Examples (machine/privilege dependent)
+
+Event log examples with results that vary by system state and access level:
+
+```powershell
+# These run without admin but may return 0 events depending on log state
+cargo run --example evt_custom_parsing
+cargo run --example evt_filter
+cargo run --example evt_streaming
+
+# Requires admin (Security log access)
+cargo run --example evt_query_basic
+
+# Requires serde feature flag
+cargo run --example evt_serde --features serde
+```
+
+#### Phase 3: Manual-Only (Long-running + side effects)
+
+Run these individually in separate terminal sessions.
+
+**Long-running ETW monitors** — press Ctrl+C to stop (require admin):
+```powershell
+cargo run --example etw_process_monitor
+cargo run --example etw_registry_monitor
+cargo run --example etw_network_monitor
+cargo run --example etw_multi_provider
+cargo run --example etw_decoded_events
+cargo run --example etw_user_mode_provider
+```
+
+**Side-effect examples** — modify state or require elevated privileges:
+```powershell
+cargo run --example desktop_tray_notification   # 5s UI notification
+cargo run --example process_spawn_parented       # spawns notepad as explorer child
+cargo run --example process_tree                 # spawns and kills test process
+cargo run --example process_wait_any             # multiple timeout scenarios (~8s)
+cargo run --example service_basics               # may restart/stop Spooler service
+cargo run --example etw_stop_with_wait           # admin + kernel provider required
+cargo run --example raw_file_copy                # admin + raw file I/O required
+```
+
+### Quick Validation
+
+Fastest way to confirm nothing is broken:
+
+```powershell
+cargo check
+cargo test --lib
+cargo run --example system_snapshot
+cargo run --example process_basics
+cargo run --example registry_basics
+```
+
+### Optional Features
+
+Enable serde support for event log serialization:
+
+```toml
+[dependencies]
+windows-erg = { version = "0.1", features = ["serde"] }
+```
+
 ## Documentation
 
 - API docs: https://docs.rs/windows-erg
@@ -201,7 +292,60 @@ The crate uses structured error types (see src/error.rs), not string-only error 
 
 ## Contributing
 
-Contributions are welcome. Keep changes minimal, consistent with module patterns, and aligned with CONTEXT.md.
+Thank you for your interest in contributing!
+
+### Before You Start
+
+1. **Read [CONTEXT.md](CONTEXT.md)** — Contains critical coding standards, error handling patterns, buffer management conventions, and RAII handle rules. This is non-negotiable.
+2. **Check existing patterns** — Review `src/registry/mod.rs` and `src/process/processes.rs` as complete reference implementations before building new features.
+3. **Understand module structure** — Each module follows a consistent pattern: public API in `mod.rs`, internal utilities in submodules, tests alongside implementations.
+
+### Making Changes
+
+Keep changes minimal and focused. One feature or fix per PR.
+
+Match existing module patterns:
+
+- Use `Cow<'static, str>` for error messages — never plain `String`
+- Implement RAII with `Drop` for all Windows handles
+- Provide `_with_buffer` and `_with_filter` variants for collection APIs
+- Use structured error types from `src/error.rs`, not ad-hoc errors
+
+### Error Handling
+
+```rust
+// Wrong
+Error::InvalidParameter("invalid value".to_string())
+
+// Correct
+Error::InvalidParameter(InvalidParameterError::new("param_name", "why it's invalid"))
+```
+
+### RAII and Handle Safety
+
+- All Windows handles must implement `Drop`
+- Use a `close_on_drop` flag for predefined handles (e.g., `INVALID_HANDLE_VALUE`)
+- No manual `CloseHandle` calls in user code — cleanup is always automatic via `Drop`
+
+### Validation Before Submitting
+
+```powershell
+cargo check
+cargo test --lib
+# Run Phase 1 sanity pass
+cargo run --example process_basics
+cargo run --example registry_write
+```
+
+### Code Review Checklist
+
+- Follows patterns in CONTEXT.md?
+- All Windows handles are RAII-protected?
+- Error messages use `Cow<'static, str>`, not `String`?
+- Collection APIs provide `_with_buffer` and `_with_filter` variants?
+- Phase 1 examples still pass?
+
+For questions or design discussions, open an issue before submitting code.
 
 ## License
 

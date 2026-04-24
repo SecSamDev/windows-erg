@@ -22,7 +22,8 @@ use windows::core::PCWSTR;
 
 use crate::error::{AccessDeniedError, InvalidParameterError, PipeConnectError, PipeError, PipeTimeoutError};
 use crate::process::{Process, ProcessId};
-use crate::wait::WaitHandle;
+use crate::wait::Wait;
+use crate::utils::to_utf16_nul;
 use crate::{Error, Result};
 
 use super::error_map::map_pipe_windows_error;
@@ -189,7 +190,7 @@ impl NamedPipeServerConfig {
 
     /// Create a named pipe server instance.
     pub fn create(&self) -> Result<NamedPipeServer> {
-        let name_wide = to_wide(self.pipe_name.as_str());
+        let name_wide = to_utf16_nul(self.pipe_name.as_str());
         let open_mode = to_server_open_mode(self.open_mode);
         let pipe_mode = to_pipe_mode(self.pipe_type);
         let max_instances = if self.max_instances == u8::MAX {
@@ -345,7 +346,7 @@ impl NamedPipeServer {
     /// This method returns [`Error::Pipe(PipeError::Timeout)`] if no client connection is
     /// completed within the provided timeout.
     pub fn connect_with_timeout(&self, timeout: Duration) -> Result<()> {
-        let wait = WaitHandle::manual_reset(false)?;
+        let wait = Wait::manual_reset(false)?;
         self.connect_with_wait_timeout(&wait, timeout)
     }
 
@@ -353,7 +354,7 @@ impl NamedPipeServer {
     ///
     /// If `wait` is signaled first, this method cancels the pending connect operation and
     /// returns [`Error::Pipe(PipeError::Connect)`] with interruption context.
-    pub fn connect_with_wait(&self, wait: &WaitHandle) -> Result<()> {
+    pub fn connect_with_wait(&self, wait: &Wait) -> Result<()> {
         self.connect_with_wait_timeout(wait, Duration::MAX)
     }
 
@@ -361,8 +362,8 @@ impl NamedPipeServer {
     ///
     /// If `wait` is signaled first, this method cancels the pending connect operation and
     /// returns [`Error::Pipe(PipeError::Connect)`] with interruption context.
-    pub fn connect_with_wait_timeout(&self, wait: &WaitHandle, timeout: Duration) -> Result<()> {
-        let connect_event = WaitHandle::manual_reset(false)?;
+    pub fn connect_with_wait_timeout(&self, wait: &Wait, timeout: Duration) -> Result<()> {
+        let connect_event = Wait::manual_reset(false)?;
         let mut overlapped = OVERLAPPED {
             hEvent: connect_event.raw_handle(),
             ..Default::default()
@@ -576,6 +577,3 @@ fn to_pipe_mode(pipe_type: NamedPipeType) -> NAMED_PIPE_MODE {
     }
 }
 
-fn to_wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(std::iter::once(0)).collect()
-}

@@ -19,6 +19,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Threading",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Environment",
     "Win32_System_ProcessStatus",
     "Win32_System_Memory",
     "Win32_System_SystemInformation",
@@ -29,6 +30,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Services",
     "Win32_System_IO",
     "Win32_System_Ioctl",
+    "Win32_System_LibraryLoader",
     
     # WDK - Kernel mode APIs
     "Wdk_System_Threading",
@@ -46,12 +48,21 @@ windows = { version = "0.58", features = [
     "Win32_Storage_FileSystem",
     
     # Network
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
     "Win32_NetworkManagement_WindowsFirewall",
+    "Win32_Networking_WinSock",
     "Win32_Networking_WinInet",
     "Win32_Networking_WinHttp",
     
     # Foundation
     "Win32_Foundation",
+
+    # UI and desktop windowing
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
     
     # Other
     "Win32_System_Com",
@@ -125,6 +136,10 @@ name = "process_tree"
 path = "examples/process_tree.rs"
 
 [[example]]
+name = "process_spawn_parented"
+path = "examples/process_spawn_parented.rs"
+
+[[example]]
 name = "registry_operations"
 path = "examples/registry_operations.rs"
 
@@ -143,3 +158,15 @@ path = "examples/service_basics.rs"
 [[example]]
 name = "service_enumerate"
 path = "examples/service_enumerate.rs"
+
+[[example]]
+name = "system_snapshot"
+path = "examples/system_snapshot.rs"
+
+[[example]]
+name = "desktop_windows"
+path = "examples/desktop_windows.rs"
+
+[[example]]
+name = "desktop_tray_notification"
+path = "examples/desktop_tray_notification.rs"

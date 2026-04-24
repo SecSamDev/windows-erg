@@ -8,6 +8,7 @@ use windows::Win32::Security::Authorization::{
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
 
 use crate::error::{Error, PipeCreateError, PipeError};
+use crate::utils::to_utf16_nul;
 
 use super::types::PipeSecurityOptions;
 
@@ -20,22 +21,22 @@ pub(crate) struct NativePipeSecurityAttributes {
 impl NativePipeSecurityAttributes {
     pub(crate) fn from_options(options: &PipeSecurityOptions, resource: &str) -> crate::Result<Self> {
         let mut descriptor = None;
-        let mut attrs = SECURITY_ATTRIBUTES::default();
-
-        attrs.nLength = std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32;
-        attrs.bInheritHandle = options.inherit_handle.into();
-        attrs.lpSecurityDescriptor = std::ptr::null_mut::<c_void>();
+        let mut attrs = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            bInheritHandle: options.inherit_handle.into(),
+            lpSecurityDescriptor: std::ptr::null_mut::<c_void>(),
+        };
 
         if let Some(security_descriptor) = &options.security_descriptor {
             let sddl = descriptor_to_sddl(security_descriptor);
-            let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+            let sddl_wide = to_utf16_nul(&sddl);
 
             let mut raw_descriptor = PSECURITY_DESCRIPTOR::default();
             let mut descriptor_size = 0u32;
             unsafe {
                 ConvertStringSecurityDescriptorToSecurityDescriptorW(
                     PCWSTR(sddl_wide.as_ptr()),
-                    SDDL_REVISION_1 as u32,
+                    SDDL_REVISION_1,
                     &mut raw_descriptor as *mut _,
                     Some(&mut descriptor_size),
                 )
