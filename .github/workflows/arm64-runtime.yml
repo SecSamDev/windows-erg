@@ -1,0 +1,55 @@
+name: ARM64 Runtime Validation
+
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  arm64-runtime:
+    name: ARM64 Runtime Smoke
+    runs-on: [self-hosted, windows, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-arm64-runtime-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-arm64-runtime-
+
+      - name: cargo test --lib (default features)
+        run: cargo test --lib
+
+      - name: cargo test --lib (all features)
+        run: cargo test --lib --features full
+
+      - name: cargo test --tests (non-flaky subset)
+        run: >
+          cargo test --tests --
+          --skip wait_any_reports_cancel_first
+          --skip wait_any_reports_process_exit_first
+          --skip wait_any_reports_timeout_first
+
+      - name: process_basics
+        run: cargo run --example process_basics --release
+        timeout-minutes: 1
+
+      - name: process_metrics
+        run: cargo run --example process_metrics --release
+        timeout-minutes: 1
+
+      - name: system_snapshot
+        run: cargo run --example system_snapshot --release
+        timeout-minutes: 1

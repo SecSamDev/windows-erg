@@ -3,10 +3,7 @@
 use std::ffi::CString;
 use std::path::Path;
 
-use windows::Win32::Foundation::{
-    CloseHandle, DUPLICATE_CLOSE_SOURCE, DuplicateHandle, HANDLE, INVALID_HANDLE_VALUE,
-    WAIT_OBJECT_0,
-};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0};
 use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, MODULEENTRY32W, Module32FirstW, Module32NextW, TH32CS_SNAPMODULE,
@@ -17,7 +14,7 @@ use windows::Win32::System::Memory::{
     MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAllocEx, VirtualFreeEx,
 };
 use windows::Win32::System::Threading::{
-    CreateRemoteThread, GetCurrentProcess, OpenProcess, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE,
+    CreateRemoteThread, OpenProcess, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE,
     PROCESS_VM_OPERATION, PROCESS_VM_WRITE, WaitForSingleObject,
 };
 
@@ -297,47 +294,23 @@ fn inject_impl(process_handle: HANDLE, pid: u32, dll_path: &CString) -> Result<(
     let wait_result = unsafe { WaitForSingleObject(remote_thread, INJECT_TIMEOUT_MS) };
 
     if wait_result == WAIT_OBJECT_0 {
-        // Retrieve the exit code (which is the HMODULE returned by LoadLibraryA).
+        // Retrieve the exit code to detect obvious LoadLibraryA failures.
+        // GetExitCodeThread is u32, so we do not interpret it as a pointer-sized
+        // remote module handle on 64-bit targets.
         let mut exit_code: u32 = 0;
         if unsafe {
             windows::Win32::System::Threading::GetExitCodeThread(remote_thread, &mut exit_code)
                 .is_ok()
-        } {
-            let module_handle = exit_code as isize;
-            if module_handle == 0 {
-                // LoadLibraryA returned NULL — injection failed inside the target process.
-                unsafe {
-                    let _ = CloseHandle(remote_thread);
-                    let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE);
-                }
-                return Err(Error::Process(ProcessError::InjectionFailed(
-                    InjectionFailedError::new(
-                        pid,
-                        "LoadLibraryA returned NULL in target process (wrong bitness or DLL not found?)",
-                    ),
-                )));
+        } && exit_code == 0
+        {
+            // LoadLibraryA returned NULL — injection failed inside the target process.
+            unsafe {
+                let _ = CloseHandle(remote_thread);
+                let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE);
             }
-
-            // Close the remote HMODULE handle to avoid leaking it in the target process.
-            if module_handle != INVALID_HANDLE_VALUE.0 as isize {
-                let mut dup_handle = HANDLE::default();
-                let _ = unsafe {
-                    DuplicateHandle(
-                        process_handle,
-                        HANDLE(module_handle as *mut _),
-                        GetCurrentProcess(),
-                        &mut dup_handle,
-                        0,
-                        false,
-                        DUPLICATE_CLOSE_SOURCE,
-                    )
-                };
-                if !dup_handle.is_invalid() {
-                    unsafe {
-                        let _ = CloseHandle(dup_handle);
-                    }
-                }
-            }
+            return Err(Error::Process(ProcessError::InjectionFailed(
+                InjectionFailedError::new(pid, "LoadLibraryA returned NULL in target process"),
+            )));
         }
     }
     // If wait timed out the thread may still be running; we leave it running

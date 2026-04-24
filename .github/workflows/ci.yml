@@ -51,6 +51,45 @@ jobs:
         run: cargo clippy --all-targets --features full -- -D warnings
 
   # ──────────────────────────────────────────────
+  # Job 1b: ARM64 cross-target compile validation
+  # Validates aarch64-pc-windows-msvc buildability on
+  # standard Windows runners (compile-only, no runtime).
+  # ──────────────────────────────────────────────
+  arm64-cross-compile:
+    name: ARM64 Cross-Compile
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-arm64-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-arm64-
+
+      - name: cargo check (default features, ARM64 target)
+        run: cargo check --all-targets --target aarch64-pc-windows-msvc
+
+      - name: cargo check (all features, ARM64 target)
+        run: cargo check --all-targets --features full --target aarch64-pc-windows-msvc
+
+      - name: cargo build --examples (default features, ARM64 target)
+        run: cargo build --examples --target aarch64-pc-windows-msvc
+
+      - name: cargo build --examples (all features, ARM64 target)
+        run: cargo build --examples --features full --target aarch64-pc-windows-msvc
+
+  # ──────────────────────────────────────────────
   # Job 2: Unit + integration tests (non-admin)
   # Runs all lib tests and integration tests that
   # do not require elevated privileges.

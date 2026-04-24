@@ -35,6 +35,11 @@ windows-erg = "0.1"
   - x86_64-pc-windows-msvc
   - aarch64-pc-windows-msvc
 
+### ARM64 Validation Scope
+
+- CI validates `aarch64-pc-windows-msvc` using cross-target compile checks.
+- Runtime behavior should be validated on native Windows ARM64 hardware/runners.
+
 ## Core Modules
 
 - process: process and thread enumeration, process tree operations, module inspection

@@ -3,7 +3,7 @@ name = "windows-erg"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.90"
-authors = ["samuel.garces@protonmail.com>"]
+authors = ["Samuel Garces <samuel.garces@protonmail.com>"]
 license = "MIT"
 description = "Ergonomic, idiomatic Rust wrappers for Windows APIs"
 repository = "https://github.com/secsamdev/windows-erg"
@@ -11,6 +11,11 @@ documentation = "https://docs.rs/windows-erg"
 readme = "README.md"
 keywords = ["windows", "api", "ergonomic", "system", "process"]
 categories = ["os::windows-apis", "api-bindings"]
+include = ["src/**", "examples/**", "README.md", "LICENSE", "Cargo.toml"]
+
+[package.metadata.docs.rs]
+default-target = "x86_64-pc-windows-msvc"
+targets = ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]
 
 [dependencies]
 # Core Windows API bindings
