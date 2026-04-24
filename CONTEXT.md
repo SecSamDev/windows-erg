@@ -4,6 +4,8 @@ Purpose: fast, reliable implementation guidance for contributors and coding agen
 
 Rule: do not create extra documentation files unless explicitly requested. Update existing docs instead.
 
+Rule: when adding a new example under `examples/`, update README example lists in the same change. If the example is safe and stable for CI/CD, add it to the appropriate README auto-run testing bucket.
+
 ## 1) Fast Path Checklist
 
 Follow this order before changing code:

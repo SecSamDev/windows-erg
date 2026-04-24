@@ -163,6 +163,7 @@ See examples:
 See examples:
 
 - examples/security_permissions.rs
+- examples/pipes_list.rs
 
 ## Examples In This Repository
 
@@ -207,6 +208,8 @@ The crate uses structured error types (see src/error.rs), not string-only error 
 ### Running Examples
 
 Examples are organized into three buckets based on privilege level, runtime behavior, and side effects.
+
+When adding a new example, update the example lists in this README. If the example is safe and stable for CI/CD, also place it in the appropriate auto-run bucket.
 
 #### Phase 1: Default Auto-Run (17 examples, ~8s, non-admin friendly)
 

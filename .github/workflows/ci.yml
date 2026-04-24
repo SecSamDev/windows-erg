@@ -165,7 +165,7 @@ jobs:
 
   # ──────────────────────────────────────────────
   # Job 4: Example run — Phase 1 (safe auto-run)
-  # 17 non-admin, side-effect-free, self-terminating
+  # 18 non-admin, side-effect-free, self-terminating
   # examples used as integration-style smoke tests.
   # Built once in release mode, run with 1-min timeout.
   # ──────────────────────────────────────────────
@@ -259,6 +259,10 @@ jobs:
       - name: service_enumerate
         run: cargo run --example service_enumerate --release
         timeout-minutes: 1
+
+      - name: pipes_list
+        run: cargo run --example pipes_list --release
+        timeout-minutes: 2
 
   # ──────────────────────────────────────────────
   # Job 5: Example run — Phase 2 (conditional)

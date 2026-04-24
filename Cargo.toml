@@ -38,6 +38,8 @@ windows = { version = "0.58", features = [
     "Win32_System_LibraryLoader",
     
     # WDK - Kernel mode APIs
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
     "Wdk_System_Threading",
     
     # Security
@@ -175,3 +177,7 @@ path = "examples/desktop_windows.rs"
 [[example]]
 name = "desktop_tray_notification"
 path = "examples/desktop_tray_notification.rs"
+
+[[example]]
+name = "pipes_list"
+path = "examples/pipes_list.rs"

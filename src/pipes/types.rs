@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::time::{Duration, SystemTime};
 
 use windows::Win32::Foundation::HANDLE;
 
@@ -44,12 +45,100 @@ impl PipeName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Create a canonical pipe name from a relative NamedPipe directory entry.
+    pub fn from_relative_name(name: impl AsRef<str>) -> Result<Self> {
+        let name = name.as_ref();
+        Self::new(format!("{}{}", Self::PREFIX, name))
+    }
 }
 
 impl std::fmt::Display for PipeName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
+}
+
+/// Snapshot metadata for a named pipe currently present in the local pipe namespace.
+#[derive(Debug, Clone)]
+pub struct NamedPipeInfo {
+    /// Canonical pipe path (for example `\\.\pipe\my-pipe`).
+    pub pipe_name: PipeName,
+    /// Relative entry name as returned by the NamedPipe filesystem.
+    pub relative_name: String,
+    /// Optional creation time when the filesystem reports it.
+    pub creation_time: Option<SystemTime>,
+    /// Optional last access time when the filesystem reports it.
+    pub last_access_time: Option<SystemTime>,
+    /// Optional last write time when the filesystem reports it.
+    pub last_write_time: Option<SystemTime>,
+    /// Optional metadata change time when the filesystem reports it.
+    pub change_time: Option<SystemTime>,
+    /// End-of-file size reported by the filesystem.
+    pub end_of_file: i64,
+    /// Allocation size reported by the filesystem.
+    pub allocation_size: i64,
+    /// Raw Win32 file attribute bits.
+    pub file_attributes: u32,
+    /// Directory file index when reported by the filesystem.
+    pub file_index: u32,
+    /// Optional local pipe state details from `FilePipeLocalInformation`.
+    pub local_info: Option<NamedPipeLocalInfo>,
+}
+
+impl NamedPipeInfo {
+    /// Return the canonical pipe path.
+    pub fn pipe_name(&self) -> &PipeName {
+        &self.pipe_name
+    }
+}
+
+/// Local named-pipe state details returned by `FilePipeLocalInformation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NamedPipeLocalInfo {
+    /// Named pipe type as reported by the kernel.
+    pub named_pipe_type: u32,
+    /// Server/client configuration value.
+    pub named_pipe_configuration: u32,
+    /// Maximum pipe instances allowed.
+    pub maximum_instances: u32,
+    /// Current number of connected/open instances.
+    pub current_instances: u32,
+    /// Inbound quota size in bytes.
+    pub inbound_quota: u32,
+    /// Bytes currently available for reading.
+    pub read_data_available: u32,
+    /// Outbound quota size in bytes.
+    pub outbound_quota: u32,
+    /// Remaining write quota in bytes.
+    pub write_quota_available: u32,
+    /// Current pipe state value.
+    pub named_pipe_state: u32,
+    /// Whether this handle points at server or client end.
+    pub named_pipe_end: u32,
+}
+
+/// Change detected between named pipe snapshots.
+#[derive(Debug, Clone)]
+pub enum NamedPipeChange {
+    /// A pipe is present in the current snapshot but was absent previously.
+    Appeared(NamedPipeInfo),
+    /// A pipe disappeared since the previous snapshot.
+    Removed(NamedPipeInfo),
+}
+
+pub(crate) fn filetime_to_system_time(filetime: i64) -> Option<SystemTime> {
+    const FILETIME_TO_UNIX_EPOCH: i64 = 116_444_736_000_000_000;
+
+    if filetime <= 0 {
+        return None;
+    }
+
+    let intervals_since_unix = filetime.saturating_sub(FILETIME_TO_UNIX_EPOCH);
+    let seconds = intervals_since_unix.div_euclid(10_000_000) as u64;
+    let nanos = (intervals_since_unix.rem_euclid(10_000_000) as u32) * 100;
+
+    Some(SystemTime::UNIX_EPOCH + Duration::new(seconds, nanos))
 }
 
 /// Access direction for a named pipe instance.

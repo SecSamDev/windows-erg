@@ -5,8 +5,8 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use windows_erg::pipes::{
-    AnonymousPipeBuilder, NamedPipeClientBuilder, NamedPipeOpenMode, NamedPipeServerBuilder,
-    NamedPipeType, PipeName, PipeSecurityOptions, Wait,
+    AnonymousPipeBuilder, NamedPipeClientBuilder, NamedPipeOpenMode, NamedPipePoller,
+    NamedPipeServerBuilder, NamedPipeType, PipeName, PipeSecurityOptions, Wait, list,
 };
 use windows_erg::security::{AccessMask, Ace, AceType, Dacl, SecurityDescriptor, Sid};
 use windows_erg::{
@@ -25,6 +25,28 @@ fn unique_pipe_name(prefix: &str) -> PipeName {
         .as_nanos();
     PipeName::new(format!(r"\\.\pipe\windows-erg-{}-{}", prefix, nanos))
         .expect("valid unique pipe name")
+}
+
+fn pipe_relative_name(pipe_name: &PipeName) -> &str {
+    pipe_name
+        .as_str()
+        .strip_prefix(PipeName::PREFIX)
+        .expect("pipe name should use canonical prefix")
+}
+
+fn wait_for_pipe_presence(pipe_name: &PipeName, expected_present: bool) -> windows_erg::Result<()> {
+    for _ in 0..20 {
+        let present = list()?.iter().any(|pipe| pipe.pipe_name == *pipe_name);
+        if present == expected_present {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    panic!(
+        "pipe presence for '{}' did not reach expected state {}",
+        pipe_name, expected_present
+    );
 }
 
 #[test]
@@ -73,6 +95,137 @@ fn named_pipe_server_client_roundtrip() -> windows_erg::Result<()> {
 
     assert_eq!(server_payload, b"ping");
     assert_eq!(&out[..count], b"pong");
+    Ok(())
+}
+
+#[test]
+fn named_pipe_list_includes_created_pipe() -> windows_erg::Result<()> {
+    let pipe_name = unique_pipe_name("list");
+
+    let server_cfg = NamedPipeServerBuilder::new()
+        .pipe_name(pipe_name.clone())
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .pipe_type(NamedPipeType::Byte)
+        .build()?;
+
+    let _server = server_cfg.create()?;
+    wait_for_pipe_presence(&pipe_name, true)?;
+
+    let pipes = list()?;
+    let pipe_info = pipes
+        .iter()
+        .find(|pipe| pipe.pipe_name == pipe_name)
+        .expect("created named pipe should be discoverable");
+
+    assert_eq!(pipe_info.relative_name, pipe_relative_name(&pipe_name));
+    assert_eq!(pipe_info.pipe_name.as_str(), pipe_name.as_str());
+    assert!(pipe_info.local_info.is_none());
+
+    let local_info = windows_erg::pipes::query_local_info(&pipe_name)?;
+    assert!(local_info.current_instances >= 1);
+
+    Ok(())
+}
+
+#[test]
+fn named_pipe_interval_poller_detects_changes() -> windows_erg::Result<()> {
+    let pipe_name = unique_pipe_name("interval-poller");
+
+    let server_cfg = NamedPipeServerBuilder::new()
+        .pipe_name(pipe_name.clone())
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .pipe_type(NamedPipeType::Byte)
+        .build()?;
+
+    let server_thread = thread::spawn(move || -> windows_erg::Result<()> {
+        thread::sleep(Duration::from_millis(40));
+        let server = server_cfg.create()?;
+        thread::sleep(Duration::from_millis(120));
+        drop(server);
+        Ok(())
+    });
+
+    let rounds = windows_erg::pipes::poll_interval(12, Duration::from_millis(25))?;
+    server_thread
+        .join()
+        .expect("server thread should not panic")?;
+
+    let mut appeared = false;
+    let mut removed = false;
+    for changes in rounds {
+        for change in changes {
+            match change {
+                windows_erg::pipes::NamedPipeChange::Appeared(info)
+                    if info.pipe_name == pipe_name =>
+                {
+                    appeared = true;
+                }
+                windows_erg::pipes::NamedPipeChange::Removed(info)
+                    if info.pipe_name == pipe_name =>
+                {
+                    removed = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    assert!(appeared, "interval poller should report pipe appearance");
+    assert!(removed, "interval poller should report pipe removal");
+
+    Ok(())
+}
+
+#[test]
+fn named_pipe_poller_detects_pipe_appearance_and_removal() -> windows_erg::Result<()> {
+    let pipe_name = unique_pipe_name("poller");
+    let mut poller = NamedPipePoller::new();
+    poller.seed()?;
+
+    let server_cfg = NamedPipeServerBuilder::new()
+        .pipe_name(pipe_name.clone())
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .pipe_type(NamedPipeType::Byte)
+        .build()?;
+
+    let server = server_cfg.create()?;
+    wait_for_pipe_presence(&pipe_name, true)?;
+
+    let mut appeared = false;
+    for _ in 0..20 {
+        let changes = poller.poll()?;
+        if changes.iter().any(|change| {
+            matches!(
+                change,
+                windows_erg::pipes::NamedPipeChange::Appeared(info) if info.pipe_name == pipe_name
+            )
+        }) {
+            appeared = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(appeared, "poller should report pipe appearance");
+
+    drop(server);
+    wait_for_pipe_presence(&pipe_name, false)?;
+
+    let mut removed = false;
+    for _ in 0..20 {
+        let changes = poller.poll()?;
+        if changes.iter().any(|change| {
+            matches!(
+                change,
+                windows_erg::pipes::NamedPipeChange::Removed(info) if info.pipe_name == pipe_name
+            )
+        }) {
+            removed = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(removed, "poller should report pipe removal");
+
     Ok(())
 }
 
