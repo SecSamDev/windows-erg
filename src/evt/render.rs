@@ -342,32 +342,30 @@ fn parse_event_xml_with_quick_xml(xml_str: &str) -> std::result::Result<Event, C
                 }
                 current_tag.clear();
             }
-            Ok(XmlEvent::Text(e)) => {
-                if in_system && !current_tag.is_empty() {
-                    let value = String::from_utf8_lossy(e.as_ref()).into_owned();
+            Ok(XmlEvent::Text(e)) if in_system && !current_tag.is_empty() => {
+                let value = String::from_utf8_lossy(e.as_ref()).into_owned();
 
-                    match current_tag.as_str() {
-                        "EventID" => {
-                            event.id = EventId::new(value.parse().unwrap_or(0));
-                        }
-                        "Level" => {
-                            let level_val: u8 = value.parse().unwrap_or(4);
-                            event.level =
-                                EventLevel::from_code(level_val).unwrap_or(EventLevel::Verbose);
-                        }
-                        "Channel" => {
-                            event.channel = intern_channel(&value);
-                        }
-                        "Computer" => {
-                            event.computer = value;
-                        }
-                        "EventRecordID" => {
-                            if let Ok(rid) = value.parse::<u64>() {
-                                event.record_id = Some(RecordId::new(rid));
-                            }
-                        }
-                        _ => {}
+                match current_tag.as_str() {
+                    "EventID" => {
+                        event.id = EventId::new(value.parse().unwrap_or(0));
                     }
+                    "Level" => {
+                        let level_val: u8 = value.parse().unwrap_or(4);
+                        event.level =
+                            EventLevel::from_code(level_val).unwrap_or(EventLevel::Verbose);
+                    }
+                    "Channel" => {
+                        event.channel = intern_channel(&value);
+                    }
+                    "Computer" => {
+                        event.computer = value;
+                    }
+                    "EventRecordID" => {
+                        if let Ok(rid) = value.parse::<u64>() {
+                            event.record_id = Some(RecordId::new(rid));
+                        }
+                    }
+                    _ => {}
                 }
             }
             Ok(XmlEvent::Empty(e)) => {

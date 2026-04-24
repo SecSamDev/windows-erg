@@ -1,0 +1,1 @@
+# Keep rustfmt defaults so local formatting matches CI behavior.
