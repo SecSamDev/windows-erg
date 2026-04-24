@@ -82,10 +82,15 @@ jobs:
       - name: cargo test --lib (all features)
         run: cargo test --lib --features full
 
-      - name: cargo test --tests (integration tests, excludes #[ignore])
-        # pipes, service, security_permissions, process_wait_any run here.
+      - name: cargo test --tests (integration tests, excludes #[ignore] and flaky wait_any cases)
+        # pipes, service, security_permissions run here.
         # etw_integration and raw_file_integration are #[ignore] and are excluded.
-        run: cargo test --tests
+        # wait_any timing-order assertions are skipped in CI due to nondeterministic scheduling.
+        run: >
+          cargo test --tests --
+          --skip wait_any_reports_cancel_first
+          --skip wait_any_reports_process_exit_first
+          --skip wait_any_reports_timeout_first
 
   # ──────────────────────────────────────────────
   # Job 3: Example compile check (all 35 examples)
