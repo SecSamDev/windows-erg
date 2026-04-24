@@ -20,9 +20,8 @@ fn main() -> windows_erg::Result<()> {
 
     println!("\n=== service::list_with_filter() running only ===");
     out_services.clear();
-    let running_count = service::list_with_filter(&mut out_services, |svc| {
-        svc.state == ServiceState::Running
-    })?;
+    let running_count =
+        service::list_with_filter(&mut out_services, |svc| svc.state == ServiceState::Running)?;
     println!("Running services: {}", running_count);
 
     for svc in out_services.iter().take(10) {

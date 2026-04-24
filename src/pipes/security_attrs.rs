@@ -1,11 +1,11 @@
 use std::ffi::c_void;
 
-use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HLOCAL, LocalFree};
 use windows::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+use windows::core::PCWSTR;
 
 use crate::error::{Error, PipeCreateError, PipeError};
 use crate::utils::to_utf16_nul;
@@ -19,7 +19,10 @@ pub(crate) struct NativePipeSecurityAttributes {
 }
 
 impl NativePipeSecurityAttributes {
-    pub(crate) fn from_options(options: &PipeSecurityOptions, resource: &str) -> crate::Result<Self> {
+    pub(crate) fn from_options(
+        options: &PipeSecurityOptions,
+        resource: &str,
+    ) -> crate::Result<Self> {
         let mut descriptor = None;
         let mut attrs = SECURITY_ATTRIBUTES {
             nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,

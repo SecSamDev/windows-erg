@@ -318,17 +318,19 @@ fn parse_event_xml_with_quick_xml(xml_str: &str) -> std::result::Result<Event, C
                         for attr in e.attributes() {
                             if let Ok(attr) = attr
                                 && attr.key.as_ref() == b"Name"
-                                    && let Ok(value) = String::from_utf8(attr.value.to_vec()) {
-                                        event.provider = intern_provider(&value);
-                                    }
+                                && let Ok(value) = String::from_utf8(attr.value.to_vec())
+                            {
+                                event.provider = intern_provider(&value);
+                            }
                         }
                     } else if tag_name == "TimeCreated" {
                         for attr in e.attributes() {
                             if let Ok(attr) = attr
                                 && attr.key.as_ref() == b"SystemTime"
-                                    && let Ok(value) = String::from_utf8(attr.value.to_vec()) {
-                                        event.timestamp = parse_iso8601_timestamp(&value);
-                                    }
+                                && let Ok(value) = String::from_utf8(attr.value.to_vec())
+                            {
+                                event.timestamp = parse_iso8601_timestamp(&value);
+                            }
                         }
                     }
                 }

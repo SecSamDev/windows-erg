@@ -220,8 +220,8 @@ pub mod render;
 pub mod types;
 
 use crate::error::{Error, EventLogError, EventLogQueryError, Result};
-use crate::wait::Wait;
 use crate::utils::to_utf16_nul;
+use crate::wait::Wait;
 use query::QueryBuilder;
 use std::path::Path;
 use types::{ChannelFilter, Event, EventQueryResult, RenderFormat};

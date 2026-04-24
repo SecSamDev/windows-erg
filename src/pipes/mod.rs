@@ -14,13 +14,13 @@ mod types;
 
 use crate::Error;
 
+pub use crate::wait::Wait;
 pub use anonymous::{
     AnonymousPipeBuilder, AnonymousPipeConfig, AnonymousPipeReader, AnonymousPipeWriter,
 };
 pub use client::{NamedPipeClient, NamedPipeClientBuilder, NamedPipeClientConfig};
 pub use integration::{ChildPipeEndpoints, PipeStdio};
 pub use server::{NamedPipeServer, NamedPipeServerBuilder, NamedPipeServerConfig};
-pub use crate::wait::Wait;
 pub use types::{
     NamedPipeOpenMode, NamedPipeType, PipeClientEndpoint, PipeName, PipeSecurityOptions,
     PipeServerEndpoint,

@@ -4,13 +4,11 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{
-    GetLastError, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
-};
+use windows::Win32::Foundation::{GetLastError, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
 use windows::Win32::System::Threading::{
     CreateEventW, ResetEvent, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
 };
+use windows::core::PCWSTR;
 
 use crate::error::{InvalidParameterError, OtherError};
 use crate::utils::{OwnedHandle, to_utf16_nul};

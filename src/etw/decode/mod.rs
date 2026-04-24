@@ -43,14 +43,16 @@ pub(crate) fn decode_from_record_parts(
     fields: Option<&[EventField]>,
 ) -> DecodedEvent {
     if provider_guid == ProcessGuid
-        && let Some(decoded) = process::decode_process_parts(version, opcode, data) {
-            return decoded;
-        }
+        && let Some(decoded) = process::decode_process_parts(version, opcode, data)
+    {
+        return decoded;
+    }
 
     if provider_guid == ImageLoadGuid
-        && let Some(decoded) = image::decode_image_parts(version, opcode, data) {
-            return decoded;
-        }
+        && let Some(decoded) = image::decode_image_parts(version, opcode, data)
+    {
+        return decoded;
+    }
 
     if let Some(fields) = fields {
         if let Some(decoded) = generic_map::decode_from_generic(provider_guid, opcode, fields) {

@@ -2,17 +2,17 @@ use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::ERROR_SERVICE_DOES_NOT_EXIST;
 use windows::Win32::System::Services::{
-    CloseServiceHandle, ControlService, QueryServiceStatusEx, StartServiceW, SC_STATUS_PROCESS_INFO,
-    SC_HANDLE, SERVICE_STATUS, SERVICE_STATUS_PROCESS,
+    CloseServiceHandle, ControlService, QueryServiceStatusEx, SC_HANDLE, SC_STATUS_PROCESS_INFO,
+    SERVICE_STATUS, SERVICE_STATUS_PROCESS, StartServiceW,
 };
 use windows::core::PCWSTR;
 
 use super::status::ServiceStatus;
 use super::types::{ServiceAccess, ServiceControl, ServiceState};
+use crate::Result;
 use crate::error::{
     Error, ServiceError, ServiceInvalidStateError, ServiceNotFoundError, ServiceOperationError,
 };
-use crate::Result;
 
 /// Handle to an opened Windows service.
 pub struct Service {
@@ -27,7 +27,8 @@ impl Service {
 
     /// Open a service by name using default access rights.
     pub fn open(name: &str) -> Result<Self> {
-        super::manager::ServiceManager::connect()?.open_with_access(name, ServiceAccess::QueryStatus)
+        super::manager::ServiceManager::connect()?
+            .open_with_access(name, ServiceAccess::QueryStatus)
     }
 
     /// Open a service by name with explicit access rights.
@@ -52,12 +53,7 @@ impl Service {
 
         let mut bytes_needed = 0u32;
         let _ = unsafe {
-            QueryServiceStatusEx(
-                self.handle,
-                SC_STATUS_PROCESS_INFO,
-                None,
-                &mut bytes_needed,
-            )
+            QueryServiceStatusEx(self.handle, SC_STATUS_PROCESS_INFO, None, &mut bytes_needed)
         };
 
         let required = (bytes_needed as usize).max(std::mem::size_of::<SERVICE_STATUS_PROCESS>());
@@ -81,12 +77,14 @@ impl Service {
                 )));
             }
 
-            Error::Service(ServiceError::OperationFailed(ServiceOperationError::with_code(
-                self.name.clone(),
-                "query",
-                "QueryServiceStatusEx failed",
-                e.code().0,
-            )))
+            Error::Service(ServiceError::OperationFailed(
+                ServiceOperationError::with_code(
+                    self.name.clone(),
+                    "query",
+                    "QueryServiceStatusEx failed",
+                    e.code().0,
+                ),
+            ))
         })?;
 
         let raw = unsafe { &*(work_buffer.as_ptr() as *const SERVICE_STATUS_PROCESS) };
@@ -100,12 +98,14 @@ impl Service {
     /// Start the service.
     pub fn start(&self) -> Result<()> {
         unsafe { StartServiceW(self.handle, None) }.map_err(|e| {
-            Error::Service(ServiceError::OperationFailed(ServiceOperationError::with_code(
-                self.name.clone(),
-                "start",
-                "StartServiceW failed",
-                e.code().0,
-            )))
+            Error::Service(ServiceError::OperationFailed(
+                ServiceOperationError::with_code(
+                    self.name.clone(),
+                    "start",
+                    "StartServiceW failed",
+                    e.code().0,
+                ),
+            ))
         })
     }
 
@@ -117,16 +117,15 @@ impl Service {
     /// Send a control code to the service.
     pub fn send_control(&self, control: ServiceControl) -> Result<()> {
         let mut status = SERVICE_STATUS::default();
-        unsafe {
-            ControlService(self.handle, control.to_windows(), &mut status)
-        }
-        .map_err(|e| {
-            Error::Service(ServiceError::OperationFailed(ServiceOperationError::with_code(
-                self.name.clone(),
-                control.operation_name(),
-                "ControlService failed",
-                e.code().0,
-            )))
+        unsafe { ControlService(self.handle, control.to_windows(), &mut status) }.map_err(|e| {
+            Error::Service(ServiceError::OperationFailed(
+                ServiceOperationError::with_code(
+                    self.name.clone(),
+                    control.operation_name(),
+                    "ControlService failed",
+                    e.code().0,
+                ),
+            ))
         })
     }
 

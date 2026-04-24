@@ -6,8 +6,8 @@ use super::types::{CpuSample, StackTrace, SystemProvider, ThreadContext, TraceEv
 use crate::Result;
 use crate::error::{Error, EtwConsumeError, EtwError, EtwProviderError, EtwSessionError};
 use crate::types::ProcessId;
-use crate::wait::Wait;
 use crate::utils::to_utf16_nul;
+use crate::wait::Wait;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver, SyncSender};

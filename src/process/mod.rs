@@ -89,13 +89,13 @@
 //! # }
 //! ```
 
+mod inject;
 mod list;
 mod memory;
 mod metrics;
 mod modules;
 mod peb;
 mod processes;
-mod inject;
 mod spawn;
 mod threads;
 mod tree;

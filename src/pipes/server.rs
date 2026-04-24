@@ -8,7 +8,7 @@ use windows::Win32::Foundation::{
     WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows::Win32::Storage::FileSystem::{
-    FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_INBOUND,
+    FILE_FLAG_OVERLAPPED, FILE_FLAGS_AND_ATTRIBUTES, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_INBOUND,
     PIPE_ACCESS_OUTBOUND, ReadFile, WriteFile,
 };
 use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
@@ -20,10 +20,12 @@ use windows::Win32::System::Pipes::{
 use windows::Win32::System::Threading::WaitForMultipleObjects;
 use windows::core::PCWSTR;
 
-use crate::error::{AccessDeniedError, InvalidParameterError, PipeConnectError, PipeError, PipeTimeoutError};
+use crate::error::{
+    AccessDeniedError, InvalidParameterError, PipeConnectError, PipeError, PipeTimeoutError,
+};
 use crate::process::{Process, ProcessId};
-use crate::wait::Wait;
 use crate::utils::to_utf16_nul;
+use crate::wait::Wait;
 use crate::{Error, Result};
 
 use super::error_map::map_pipe_windows_error;
@@ -389,9 +391,8 @@ impl NamedPipeServer {
         }
 
         let handles = [connect_event.raw_handle(), wait.raw_handle()];
-        let wait_result = unsafe {
-            WaitForMultipleObjects(&handles, false, duration_to_wait_ms(timeout))
-        };
+        let wait_result =
+            unsafe { WaitForMultipleObjects(&handles, false, duration_to_wait_ms(timeout)) };
 
         if wait_result == WAIT_OBJECT_0 {
             let mut transferred = 0u32;
@@ -447,7 +448,9 @@ impl NamedPipeServer {
     }
 
     fn validate_connected_client(&self) -> Result<()> {
-        if !self.allowed_executables.is_empty() && let Err(e) = self.check_client_executable() {
+        if !self.allowed_executables.is_empty()
+            && let Err(e) = self.check_client_executable()
+        {
             let _ = self.disconnect();
             return Err(e);
         }
@@ -488,9 +491,10 @@ impl NamedPipeServer {
         };
 
         let allowed = self.allowed_executables.iter().any(|allowed| {
-            allowed.as_os_str().to_string_lossy().eq_ignore_ascii_case(
-                &client_path.as_os_str().to_string_lossy(),
-            )
+            allowed
+                .as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&client_path.as_os_str().to_string_lossy())
         });
 
         if allowed {
@@ -576,4 +580,3 @@ fn to_pipe_mode(pipe_type: NamedPipeType) -> NAMED_PIPE_MODE {
         ),
     }
 }
-

@@ -78,7 +78,10 @@ fn named_pipe_server_client_roundtrip() -> windows_erg::Result<()> {
 
 #[test]
 fn anonymous_pipe_roundtrip() -> windows_erg::Result<()> {
-    let (mut reader, mut writer) = AnonymousPipeBuilder::new().buffer_size(2048).build().create()?;
+    let (mut reader, mut writer) = AnonymousPipeBuilder::new()
+        .buffer_size(2048)
+        .build()
+        .create()?;
 
     writer
         .write_all(b"anonymous-test")

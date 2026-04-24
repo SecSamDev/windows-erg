@@ -121,7 +121,6 @@ pub struct PipeServerEndpoint {
 impl PipeServerEndpoint {
     /// Create a server endpoint from a raw handle.
     pub(crate) fn from_raw(
-        
         handle: HANDLE,
         close_on_drop: bool,
         pipe_name: PipeName,

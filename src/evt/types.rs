@@ -154,7 +154,6 @@ impl StringCache {
 
         cache
     }
-
 }
 
 /// Static cache instance (lazy initialized).

@@ -720,10 +720,12 @@ fn parse_out_type_override(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFie
         || out_type == TDH_OUTTYPE_JSON.0
         || out_type == TDH_OUTTYPE_XML.0
         || out_type == TDH_OUTTYPE_REDUCEDSTRING.0)
-        && size_hint > 0 && size_hint <= data.len() {
-            let (s, consumed) = parse_utf8_sized(data, size_hint)?;
-            return Some((EventFieldValue::String(s), consumed));
-        }
+        && size_hint > 0
+        && size_hint <= data.len()
+    {
+        let (s, consumed) = parse_utf8_sized(data, size_hint)?;
+        return Some((EventFieldValue::String(s), consumed));
+    }
 
     None
 }

@@ -18,16 +18,13 @@ use windows::Win32::System::Threading::{
     EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, InitializeProcThreadAttributeList,
     LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcess, OpenProcessToken,
     PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, PROCESS_CREATE_PROCESS, PROCESS_INFORMATION,
-    PROCESS_QUERY_LIMITED_INFORMATION, ResumeThread, STARTUPINFOEXW,
-    UpdateProcThreadAttribute,
+    PROCESS_QUERY_LIMITED_INFORMATION, ResumeThread, STARTUPINFOEXW, UpdateProcThreadAttribute,
 };
 use windows::core::PCWSTR;
 
 use super::processes::Process;
 use super::types::{ProcessAccess, ProcessId, ThreadId};
-use crate::error::{
-    Error, InvalidParameterError, ProcessError, ProcessSpawnError, Result,
-};
+use crate::error::{Error, InvalidParameterError, ProcessError, ProcessSpawnError, Result};
 use crate::utils::{OwnedHandle, to_utf16_nul};
 
 const DEFAULT_DESKTOP: &str = "winsta0\\default";
@@ -52,11 +49,7 @@ fn map_spawn_windows_error(
     )))
 }
 
-fn spawn_error(
-    command: &str,
-    reason: impl Into<Cow<'static, str>>,
-    error_code: i32,
-) -> Error {
+fn spawn_error(command: &str, reason: impl Into<Cow<'static, str>>, error_code: i32) -> Error {
     Error::Process(ProcessError::SpawnFailed(ProcessSpawnError::with_code(
         Cow::Owned(command.to_string()),
         reason,
@@ -172,20 +165,10 @@ impl Drop for AttributeList {
 }
 
 fn get_user_token_from_pid(pid: ProcessId, command: &str) -> Result<OwnedHandle> {
-    let process_handle = unsafe {
-        OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION,
-            false,
-            pid.as_u32(),
-        )
-    }
-    .map_err(|e| {
-        map_spawn_windows_error(
-            command,
-            "Failed to open token source process",
-            &e,
-        )
-    })?;
+    let process_handle =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.as_u32()) }.map_err(
+            |e| map_spawn_windows_error(command, "Failed to open token source process", &e),
+        )?;
 
     let process_handle = OwnedHandle::new(process_handle);
 
@@ -246,10 +229,8 @@ fn enable_privilege(privilege_name: &str, command: &str) -> Result<()> {
 
     token_privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
 
-    unsafe {
-        AdjustTokenPrivileges(token.raw(), false, Some(&token_privileges), 0, None, None)
-    }
-    .map_err(|e| map_spawn_windows_error(command, "Failed to adjust token privileges", &e))?;
+    unsafe { AdjustTokenPrivileges(token.raw(), false, Some(&token_privileges), 0, None, None) }
+        .map_err(|e| map_spawn_windows_error(command, "Failed to adjust token privileges", &e))?;
 
     let last_error: WIN32_ERROR = unsafe { GetLastError() };
     if last_error == ERROR_NOT_ALL_ASSIGNED {
@@ -289,12 +270,12 @@ fn get_userprofile_from_env_block(env_block: *mut c_void) -> Option<Vec<u16>> {
             let env_var_string = String::from_utf16_lossy(env_var);
 
             if let Some(eq_pos) = env_var_string.find('=')
-                && env_var_string.starts_with("USERPROFILE=") {
-                    let value_len = env_var_string[eq_pos + 1..].encode_utf16().count();
-                    let mut out =
-                        std::slice::from_raw_parts(ptr.add(eq_pos + 1), value_len).to_vec();
-                    out.push(0);
-                    return Some(out);
+                && env_var_string.starts_with("USERPROFILE=")
+            {
+                let value_len = env_var_string[eq_pos + 1..].encode_utf16().count();
+                let mut out = std::slice::from_raw_parts(ptr.add(eq_pos + 1), value_len).to_vec();
+                out.push(0);
+                return Some(out);
             }
 
             ptr = ptr.add(len + 1);
@@ -384,7 +365,10 @@ impl ProcessSpawner {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        self.args = args.into_iter().map(|arg| arg.as_ref().to_string()).collect();
+        self.args = args
+            .into_iter()
+            .map(|arg| arg.as_ref().to_string())
+            .collect();
         self
     }
 
@@ -424,9 +408,8 @@ impl ProcessSpawner {
         let command = format_command_line(&self.exe_path, &self.args);
         let mut command_wide = to_utf16_nul(&command);
 
-        let mut creation_flags = EXTENDED_STARTUPINFO_PRESENT
-            | CREATE_DEFAULT_ERROR_MODE
-            | CREATE_NEW_CONSOLE;
+        let mut creation_flags =
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_DEFAULT_ERROR_MODE | CREATE_NEW_CONSOLE;
 
         if self.suspended {
             creation_flags |= CREATE_SUSPENDED;
@@ -436,17 +419,13 @@ impl ProcessSpawner {
         let mut startup_info = STARTUPINFOEXW::default();
         startup_info.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
 
-        let mut desktop_wide = self
-            .desktop
-            .as_deref()
-            .map(to_utf16_nul)
-            .or_else(|| {
-                if self.token_source_pid.is_some() {
-                    Some(to_utf16_nul(DEFAULT_DESKTOP))
-                } else {
-                    None
-                }
-            });
+        let mut desktop_wide = self.desktop.as_deref().map(to_utf16_nul).or_else(|| {
+            if self.token_source_pid.is_some() {
+                Some(to_utf16_nul(DEFAULT_DESKTOP))
+            } else {
+                None
+            }
+        });
 
         if let Some(desktop) = desktop_wide.as_mut() {
             startup_info.StartupInfo.lpDesktop = windows::core::PWSTR(desktop.as_mut_ptr());

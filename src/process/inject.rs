@@ -4,27 +4,26 @@ use std::ffi::CString;
 use std::path::Path;
 
 use windows::Win32::Foundation::{
-    CloseHandle, DuplicateHandle, DUPLICATE_CLOSE_SOURCE, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, DUPLICATE_CLOSE_SOURCE, DuplicateHandle, HANDLE, INVALID_HANDLE_VALUE,
     WAIT_OBJECT_0,
 };
+use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
 use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W, TH32CS_SNAPMODULE,
+    CreateToolhelp32Snapshot, MODULEENTRY32W, Module32FirstW, Module32NextW, TH32CS_SNAPMODULE,
     TH32CS_SNAPMODULE32,
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows::Win32::System::Memory::{
-    VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
+    MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE, VirtualAllocEx, VirtualFreeEx,
 };
 use windows::Win32::System::Threading::{
-    CreateRemoteThread, GetCurrentProcess, OpenProcess, WaitForSingleObject,
-    PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_VM_OPERATION, PROCESS_VM_WRITE,
+    CreateRemoteThread, GetCurrentProcess, OpenProcess, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE,
+    PROCESS_VM_OPERATION, PROCESS_VM_WRITE, WaitForSingleObject,
 };
-use windows::Win32::System::Diagnostics::Debug::WriteProcessMemory;
 
 use super::processes::Process;
 use crate::error::{
-    AlreadyInjectedError, Error, InjectionFailedError, InvalidParameterError, ProcessError,
-    Result,
+    AlreadyInjectedError, Error, InjectionFailedError, InvalidParameterError, ProcessError, Result,
 };
 
 /// Injection timeout in milliseconds.
@@ -89,7 +88,10 @@ impl Process {
         let pid = self.pid().as_u32();
         let process_handle = unsafe {
             OpenProcess(
-                PROCESS_CREATE_THREAD | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_DUP_HANDLE,
+                PROCESS_CREATE_THREAD
+                    | PROCESS_VM_WRITE
+                    | PROCESS_VM_OPERATION
+                    | PROCESS_DUP_HANDLE,
                 false,
                 pid,
             )
@@ -106,7 +108,9 @@ impl Process {
 
         // Perform injection; ensure we always close the handle.
         let result = inject_impl(process_handle, pid, &dll_path_cstr);
-        unsafe { let _ = CloseHandle(process_handle); }
+        unsafe {
+            let _ = CloseHandle(process_handle);
+        }
         result
     }
 
@@ -130,14 +134,17 @@ impl Process {
         let dll_name_lower = dll_name.to_ascii_lowercase();
 
         // TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32 captures both 32- and 64-bit modules.
-        let snapshot = unsafe {
-            CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)
-        }
-        .map_err(|e| {
-            Error::Process(ProcessError::InjectionFailed(
-                InjectionFailedError::with_code(pid, "Failed to snapshot process modules", e.code().0),
-            ))
-        })?;
+        let snapshot =
+            unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid) }
+                .map_err(|e| {
+                    Error::Process(ProcessError::InjectionFailed(
+                        InjectionFailedError::with_code(
+                            pid,
+                            "Failed to snapshot process modules",
+                            e.code().0,
+                        ),
+                    ))
+                })?;
 
         let mut entry = MODULEENTRY32W {
             dwSize: std::mem::size_of::<MODULEENTRY32W>() as u32,
@@ -157,8 +164,8 @@ impl Process {
                     .iter()
                     .position(|&c| c == 0)
                     .unwrap_or(entry.szModule.len());
-                let module_name = String::from_utf16_lossy(&entry.szModule[..name_end])
-                    .to_ascii_lowercase();
+                let module_name =
+                    String::from_utf16_lossy(&entry.szModule[..name_end]).to_ascii_lowercase();
                 if module_name == dll_name_lower {
                     result = true;
                     break;
@@ -170,7 +177,9 @@ impl Process {
             result
         };
 
-        unsafe { let _ = CloseHandle(snapshot); }
+        unsafe {
+            let _ = CloseHandle(snapshot);
+        }
         Ok(found)
     }
 
@@ -212,22 +221,32 @@ fn inject_impl(process_handle: HANDLE, pid: u32, dll_path: &CString) -> Result<(
         )
     };
     if let Err(e) = write_result {
-        unsafe { let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE); }
+        unsafe {
+            let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE);
+        }
         return Err(Error::Process(ProcessError::InjectionFailed(
-            InjectionFailedError::with_code(pid, "Failed to write DLL path into target process", e.code().0),
+            InjectionFailedError::with_code(
+                pid,
+                "Failed to write DLL path into target process",
+                e.code().0,
+            ),
         )));
     }
 
     // Resolve LoadLibraryA in kernel32.
     let load_library_addr = unsafe {
-        let k32 = GetModuleHandleA(windows::core::s!("kernel32.dll")).map_err(|e: windows::core::Error| {
-            let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE);
-            Error::Process(ProcessError::InjectionFailed(InjectionFailedError::with_code(
-                pid,
-                "Failed to get kernel32.dll handle",
-                e.code().0,
-            )))
-        })?;
+        let k32 = GetModuleHandleA(windows::core::s!("kernel32.dll")).map_err(
+            |e: windows::core::Error| {
+                let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE);
+                Error::Process(ProcessError::InjectionFailed(
+                    InjectionFailedError::with_code(
+                        pid,
+                        "Failed to get kernel32.dll handle",
+                        e.code().0,
+                    ),
+                ))
+            },
+        )?;
         GetProcAddress(k32, windows::core::s!("LoadLibraryA")).ok_or_else(|| {
             let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE);
             Error::Process(ProcessError::InjectionFailed(InjectionFailedError::new(
@@ -253,12 +272,16 @@ fn inject_impl(process_handle: HANDLE, pid: u32, dll_path: &CString) -> Result<(
         )
     }
     .map_err(|e| {
-        unsafe { let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE); }
-        Error::Process(ProcessError::InjectionFailed(InjectionFailedError::with_code(
-            pid,
-            "Failed to create remote thread in target process",
-            e.code().0,
-        )))
+        unsafe {
+            let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE);
+        }
+        Error::Process(ProcessError::InjectionFailed(
+            InjectionFailedError::with_code(
+                pid,
+                "Failed to create remote thread in target process",
+                e.code().0,
+            ),
+        ))
     })?;
 
     if remote_thread == INVALID_HANDLE_VALUE {
@@ -310,7 +333,9 @@ fn inject_impl(process_handle: HANDLE, pid: u32, dll_path: &CString) -> Result<(
                     )
                 };
                 if !dup_handle.is_invalid() {
-                    unsafe { let _ = CloseHandle(dup_handle); }
+                    unsafe {
+                        let _ = CloseHandle(dup_handle);
+                    }
                 }
             }
         }

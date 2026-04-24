@@ -29,7 +29,10 @@ pub fn enumerate_windows_with_buffer(out_windows: &mut Vec<WindowInfo>) -> Resul
 /// Enumerate desktop windows (top-level and child windows) with in-enumeration filtering.
 ///
 /// Returns the number of windows added to the output buffer.
-pub fn enumerate_windows_with_filter<F>(out_windows: &mut Vec<WindowInfo>, filter: F) -> Result<usize>
+pub fn enumerate_windows_with_filter<F>(
+    out_windows: &mut Vec<WindowInfo>,
+    filter: F,
+) -> Result<usize>
 where
     F: Fn(&WindowInfo) -> bool,
 {

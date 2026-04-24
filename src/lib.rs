@@ -48,8 +48,8 @@
 #![warn(missing_docs)]
 #![cfg(windows)]
 
-pub mod error;
 pub mod desktop;
+pub mod error;
 pub mod etw;
 pub mod evt;
 pub mod file;

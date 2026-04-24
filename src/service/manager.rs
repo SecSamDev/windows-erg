@@ -1,19 +1,18 @@
 use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SERVICE_DOES_NOT_EXIST};
 use windows::Win32::System::Services::{
-    CloseServiceHandle, EnumServicesStatusExW, OpenSCManagerW, OpenServiceW,
-    ENUM_SERVICE_STATUS_PROCESSW, SC_ENUM_PROCESS_INFO, SC_HANDLE, SC_MANAGER_CONNECT,
-    SC_MANAGER_ENUMERATE_SERVICE,
-    SERVICE_STATE_ALL, SERVICE_WIN32,
+    CloseServiceHandle, ENUM_SERVICE_STATUS_PROCESSW, EnumServicesStatusExW, OpenSCManagerW,
+    OpenServiceW, SC_ENUM_PROCESS_INFO, SC_HANDLE, SC_MANAGER_CONNECT,
+    SC_MANAGER_ENUMERATE_SERVICE, SERVICE_STATE_ALL, SERVICE_WIN32,
 };
 
-use super::service::{as_pcwstr, Service};
+use super::service::{Service, as_pcwstr};
 use super::status::ServiceStatus;
 use super::types::{ServiceAccess, ServiceManagerAccess};
+use crate::Result;
 use crate::error::{
     AccessDeniedError, Error, InvalidParameterError, NotFoundError, ServiceError,
     ServiceManagerError, ServiceNotFoundError,
 };
-use crate::Result;
 use crate::utils::to_utf16_nul;
 
 /// Handle to the Windows Service Control Manager.
@@ -32,10 +31,7 @@ impl ServiceManager {
     pub fn connect_with_access(access: ServiceManagerAccess) -> Result<Self> {
         let handle = unsafe { OpenSCManagerW(None, None, access.to_windows()) }.map_err(|e| {
             if e.code().0 == ERROR_ACCESS_DENIED.to_hresult().0 {
-                return Error::AccessDenied(AccessDeniedError::new(
-                    "service manager",
-                    "connect",
-                ));
+                return Error::AccessDenied(AccessDeniedError::new("service manager", "connect"));
             }
 
             Error::Service(ServiceError::ManagerError(ServiceManagerError::with_code(
@@ -67,20 +63,24 @@ impl ServiceManager {
         }
 
         let name_wide = to_utf16_nul(name);
-        let handle = unsafe { OpenServiceW(self.handle, as_pcwstr(&name_wide), access.to_windows()) }
-            .map_err(|e| {
-                if e.code().0 == ERROR_SERVICE_DOES_NOT_EXIST.to_hresult().0 {
-                    return Error::NotFound(NotFoundError::new("service", name.to_owned()));
-                }
-                if e.code().0 == ERROR_ACCESS_DENIED.to_hresult().0 {
-                    return Error::AccessDenied(AccessDeniedError::new(name.to_owned(), "open"));
-                }
+        let handle =
+            unsafe { OpenServiceW(self.handle, as_pcwstr(&name_wide), access.to_windows()) }
+                .map_err(|e| {
+                    if e.code().0 == ERROR_SERVICE_DOES_NOT_EXIST.to_hresult().0 {
+                        return Error::NotFound(NotFoundError::new("service", name.to_owned()));
+                    }
+                    if e.code().0 == ERROR_ACCESS_DENIED.to_hresult().0 {
+                        return Error::AccessDenied(AccessDeniedError::new(
+                            name.to_owned(),
+                            "open",
+                        ));
+                    }
 
-                Error::Service(ServiceError::NotFound(ServiceNotFoundError::with_code(
-                    name.to_owned(),
-                    e.code().0,
-                )))
-            })?;
+                    Error::Service(ServiceError::NotFound(ServiceNotFoundError::with_code(
+                        name.to_owned(),
+                        e.code().0,
+                    )))
+                })?;
 
         Ok(Service::new(handle, name.to_owned()))
     }
@@ -98,7 +98,11 @@ impl ServiceManager {
     }
 
     /// Enumerate services into a reusable output buffer, filtered during enumeration.
-    pub fn list_with_filter<F>(&self, out_services: &mut Vec<ServiceStatus>, filter: F) -> Result<usize>
+    pub fn list_with_filter<F>(
+        &self,
+        out_services: &mut Vec<ServiceStatus>,
+        filter: F,
+    ) -> Result<usize>
     where
         F: Fn(&ServiceStatus) -> bool,
     {

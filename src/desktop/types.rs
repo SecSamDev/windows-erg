@@ -1,5 +1,5 @@
-use std::fmt;
 use std::ffi::c_void;
+use std::fmt;
 
 use windows::Win32::Foundation::{HWND, RECT};
 

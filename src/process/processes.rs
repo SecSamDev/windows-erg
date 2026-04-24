@@ -14,8 +14,8 @@ use windows::core::PCWSTR;
 
 use super::types::{ProcessAccess, ProcessId};
 use crate::error::{Error, ProcessError, ProcessOpenError, Result};
-use crate::wait::Wait;
 use crate::utils::to_utf16_nul;
+use crate::wait::Wait;
 
 // STILL_ACTIVE exit code constant
 const STILL_ACTIVE: u32 = 259;
@@ -251,25 +251,28 @@ impl Process {
         if wait_result == WAIT_OBJECT_0 {
             let exit_code = self.get_exit_code_value()?;
             if exit_code == STILL_ACTIVE {
-                return Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
-                    self.pid.as_u32(),
-                    "Process wait completed but exit code is still active",
-                ))));
+                return Err(Error::Process(ProcessError::OpenFailed(
+                    ProcessOpenError::new(
+                        self.pid.as_u32(),
+                        "Process wait completed but exit code is still active",
+                    ),
+                )));
             }
             return Ok(exit_code);
         }
 
         if wait_result == WAIT_FAILED {
-            return Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
-                self.pid.as_u32(),
-                "Failed to wait for process exit",
-            ))));
+            return Err(Error::Process(ProcessError::OpenFailed(
+                ProcessOpenError::new(self.pid.as_u32(), "Failed to wait for process exit"),
+            )));
         }
 
-        Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
-            self.pid.as_u32(),
-            "Unexpected wait result while waiting for process exit",
-        ))))
+        Err(Error::Process(ProcessError::OpenFailed(
+            ProcessOpenError::new(
+                self.pid.as_u32(),
+                "Unexpected wait result while waiting for process exit",
+            ),
+        )))
     }
 
     /// Wait until this process exits or timeout elapses.
@@ -290,25 +293,31 @@ impl Process {
         if wait_result == WAIT_OBJECT_0 {
             let exit_code = self.get_exit_code_value()?;
             if exit_code == STILL_ACTIVE {
-                return Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
-                    self.pid.as_u32(),
-                    "Process wait completed but exit code is still active",
-                ))));
+                return Err(Error::Process(ProcessError::OpenFailed(
+                    ProcessOpenError::new(
+                        self.pid.as_u32(),
+                        "Process wait completed but exit code is still active",
+                    ),
+                )));
             }
             return Ok(Some(exit_code));
         }
 
         if wait_result == WAIT_FAILED {
-            return Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
-                self.pid.as_u32(),
-                "Failed to wait for process exit with timeout",
-            ))));
+            return Err(Error::Process(ProcessError::OpenFailed(
+                ProcessOpenError::new(
+                    self.pid.as_u32(),
+                    "Failed to wait for process exit with timeout",
+                ),
+            )));
         }
 
-        Err(Error::Process(ProcessError::OpenFailed(ProcessOpenError::new(
-            self.pid.as_u32(),
-            "Unexpected wait result while waiting for process exit",
-        ))))
+        Err(Error::Process(ProcessError::OpenFailed(
+            ProcessOpenError::new(
+                self.pid.as_u32(),
+                "Unexpected wait result while waiting for process exit",
+            ),
+        )))
     }
 
     /// Borrow this process handle as a [`Wait`] object.

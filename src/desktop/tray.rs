@@ -262,11 +262,9 @@ impl Drop for TrayIcon {
 
 fn create_message_window(class_name: &str, window_name: &str) -> Result<HWND> {
     let instance = unsafe { GetModuleHandleW(None) }.map_err(|e| {
-        Error::Desktop(DesktopError::OperationFailed(DesktopOperationError::with_code(
-            "GetModuleHandleW",
-            "tray window class",
-            e.code().0,
-        )))
+        Error::Desktop(DesktopError::OperationFailed(
+            DesktopOperationError::with_code("GetModuleHandleW", "tray window class", e.code().0),
+        ))
     })?;
 
     let class_name_wide = to_utf16_nul(class_name);
@@ -284,7 +282,11 @@ fn create_message_window(class_name: &str, window_name: &str) -> Result<HWND> {
         let code = unsafe { GetLastError() };
         if code != ERROR_CLASS_ALREADY_EXISTS {
             return Err(Error::Desktop(DesktopError::OperationFailed(
-                DesktopOperationError::with_code("RegisterClassW", class_name.to_string(), code.0 as i32),
+                DesktopOperationError::with_code(
+                    "RegisterClassW",
+                    class_name.to_string(),
+                    code.0 as i32,
+                ),
             )));
         }
     }
@@ -306,11 +308,9 @@ fn create_message_window(class_name: &str, window_name: &str) -> Result<HWND> {
         )
     }
     .map_err(|e| {
-        Error::Desktop(DesktopError::OperationFailed(DesktopOperationError::with_code(
-            "CreateWindowExW",
-            "tray message window",
-            e.code().0,
-        )))
+        Error::Desktop(DesktopError::OperationFailed(
+            DesktopOperationError::with_code("CreateWindowExW", "tray message window", e.code().0),
+        ))
     })?;
 
     Ok(hwnd)

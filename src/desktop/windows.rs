@@ -1,10 +1,10 @@
+use crate::error::{DesktopError, DesktopOperationError, Error, Result};
 use windows::Win32::Foundation::{BOOL, GetLastError, HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumChildWindows, EnumWindows, GetClassNameW, GetParent, GetWindowRect,
-    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    EnumChildWindows, EnumWindows, GetClassNameW, GetParent, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
 };
-use crate::error::{DesktopError, DesktopOperationError, Error, Result};
 
 use super::types::{CloakState, WindowHandle, WindowInfo, WindowRect};
 
@@ -21,7 +21,10 @@ pub fn enumerate_windows_with_buffer(out_windows: &mut Vec<WindowInfo>) -> Resul
 }
 
 /// Enumerate desktop windows (top-level and child windows) with in-enumeration filtering.
-pub fn enumerate_windows_with_filter<F>(out_windows: &mut Vec<WindowInfo>, filter: F) -> Result<usize>
+pub fn enumerate_windows_with_filter<F>(
+    out_windows: &mut Vec<WindowInfo>,
+    filter: F,
+) -> Result<usize>
 where
     F: Fn(&WindowInfo) -> bool,
 {
@@ -124,11 +127,7 @@ fn build_window_info(hwnd: HWND) -> WindowInfo {
 fn query_window_rect(hwnd: HWND) -> Option<WindowRect> {
     let mut rect = RECT::default();
     let ok = unsafe { GetWindowRect(hwnd, &mut rect) }.is_ok();
-    if ok {
-        Some(rect.into())
-    } else {
-        None
-    }
+    if ok { Some(rect.into()) } else { None }
 }
 
 fn query_window_text(hwnd: HWND) -> String {

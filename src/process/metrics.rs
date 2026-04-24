@@ -195,7 +195,10 @@ fn read_system_times_100ns() -> Result<(u64, u64, u64)> {
         )
     }
     .map_err(|e| {
-        Error::WindowsApi(crate::error::WindowsApiError::with_context(e, "GetSystemTimes"))
+        Error::WindowsApi(crate::error::WindowsApiError::with_context(
+            e,
+            "GetSystemTimes",
+        ))
     })?;
 
     Ok((
@@ -209,12 +212,7 @@ fn filetime_to_u64_100ns(file_time: FILETIME) -> u64 {
     ((file_time.dwHighDateTime as u64) << 32) | (file_time.dwLowDateTime as u64)
 }
 
-fn calculate_cpu_percentage(
-    start_proc: u64,
-    end_proc: u64,
-    start_sys: u64,
-    end_sys: u64,
-) -> f64 {
+fn calculate_cpu_percentage(start_proc: u64, end_proc: u64, start_sys: u64, end_sys: u64) -> f64 {
     let proc_delta = end_proc.saturating_sub(start_proc);
     let sys_delta = end_sys.saturating_sub(start_sys);
 

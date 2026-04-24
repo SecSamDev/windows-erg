@@ -12,7 +12,9 @@ use windows::Win32::NetworkManagement::IpHelper::{
     GAA_FLAG_INCLUDE_PREFIX, GET_ADAPTERS_ADDRESSES_FLAGS, GetAdaptersAddresses,
     IP_ADAPTER_ADDRESSES_LH,
 };
-use windows::Win32::Networking::WinSock::{AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR_IN, SOCKADDR_IN6};
+use windows::Win32::Networking::WinSock::{
+    AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR_IN, SOCKADDR_IN6,
+};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE,
     GetDiskFreeSpaceExW, GetLogicalDriveStringsW, GetVolumeInformationW, OPEN_EXISTING,
@@ -132,9 +134,10 @@ pub fn snapshot() -> HostSnapshot {
 /// Get hostname via native API with environment fallback.
 pub fn hostname() -> Result<String> {
     if let Ok(value) = std::env::var("COMPUTERNAME")
-        && !value.trim().is_empty() {
-            return Ok(value);
-        }
+        && !value.trim().is_empty()
+    {
+        return Ok(value);
+    }
 
     let value = registry::read_string(
         Hive::LocalMachine,
@@ -166,7 +169,11 @@ pub fn os_info() -> Result<OsInfo> {
         version.dwBuildNumber,
     );
 
-    let release_label = derive_release_label(version.dwMajorVersion, version.dwMinorVersion, version.dwBuildNumber);
+    let release_label = derive_release_label(
+        version.dwMajorVersion,
+        version.dwMinorVersion,
+        version.dwBuildNumber,
+    );
 
     Ok(OsInfo {
         product_name,
@@ -551,25 +558,26 @@ where
 
     let profile_list = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList";
     if let Ok(key) = crate::registry::RegistryKey::open(Hive::LocalMachine, profile_list)
-        && let Ok(subkeys) = key.subkeys() {
-            for sid in subkeys {
-                if let Ok(profile_path) = crate::registry::read_string(
-                    Hive::LocalMachine,
-                    &format!(r"{}\{}", profile_list, sid),
-                    "ProfileImagePath",
-                )
-                    && let Some(username) = username_from_profile_path(&profile_path) {
-                        let user = UserInfo {
-                            username: username.clone(),
-                            sid: Some(sid),
-                            source: "profile_list",
-                        };
-                        if dedup.insert(username) && filter(&user) {
-                            out_users.push(user);
-                        }
-                    }
+        && let Ok(subkeys) = key.subkeys()
+    {
+        for sid in subkeys {
+            if let Ok(profile_path) = crate::registry::read_string(
+                Hive::LocalMachine,
+                &format!(r"{}\{}", profile_list, sid),
+                "ProfileImagePath",
+            ) && let Some(username) = username_from_profile_path(&profile_path)
+            {
+                let user = UserInfo {
+                    username: username.clone(),
+                    sid: Some(sid),
+                    source: "profile_list",
+                };
+                if dedup.insert(username) && filter(&user) {
+                    out_users.push(user);
+                }
             }
         }
+    }
 
     Ok(out_users.len())
 }
@@ -596,7 +604,8 @@ fn resolve_product_name(major: u32, minor: u32, build: u32) -> Option<String> {
     let current_version_key = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
     let registry_name =
         registry::read_string(Hive::LocalMachine, current_version_key, "ProductName").ok();
-    let edition_id = registry::read_string(Hive::LocalMachine, current_version_key, "EditionID").ok();
+    let edition_id =
+        registry::read_string(Hive::LocalMachine, current_version_key, "EditionID").ok();
     let installation_type =
         registry::read_string(Hive::LocalMachine, current_version_key, "InstallationType").ok();
 
@@ -690,8 +699,8 @@ fn firmware_guid_from_smbios() -> Result<Option<String>> {
     }
 
     let mut work_buffer = vec![0u8; required];
-    let written = unsafe { GetSystemFirmwareTable(provider, 0, Some(work_buffer.as_mut_slice())) }
-        as usize;
+    let written =
+        unsafe { GetSystemFirmwareTable(provider, 0, Some(work_buffer.as_mut_slice())) } as usize;
 
     if written == 0 {
         return Err(Error::WindowsApi(WindowsApiError::with_context(
@@ -716,7 +725,12 @@ fn parse_firmware_uuid_from_raw_smbios(work_buffer: &[u8]) -> Result<Option<Stri
         return Ok(None);
     }
 
-    let table_len = u32::from_le_bytes([work_buffer[4], work_buffer[5], work_buffer[6], work_buffer[7]]) as usize;
+    let table_len = u32::from_le_bytes([
+        work_buffer[4],
+        work_buffer[5],
+        work_buffer[6],
+        work_buffer[7],
+    ]) as usize;
     if work_buffer.len() < 8 + table_len {
         return Ok(None);
     }
@@ -786,7 +800,10 @@ fn parse_multi_sz(work_buffer: &[u16]) -> Vec<String> {
 }
 
 fn first_nul_terminated(work_buffer: &[u16]) -> Option<String> {
-    let end = work_buffer.iter().position(|c| *c == 0).unwrap_or(work_buffer.len());
+    let end = work_buffer
+        .iter()
+        .position(|c| *c == 0)
+        .unwrap_or(work_buffer.len());
     if end == 0 {
         return None;
     }
@@ -817,16 +834,19 @@ fn collect_unicast_addresses(
     while !unicast_ptr.is_null() {
         let unicast = unsafe { &*unicast_ptr };
         if let Some(value) = sockaddr_to_ip_string(unicast.Address)
-            && dedup.insert(value.clone()) {
-                addresses.push(value);
-            }
+            && dedup.insert(value.clone())
+        {
+            addresses.push(value);
+        }
         unicast_ptr = unicast.Next;
     }
 
     addresses
 }
 
-fn sockaddr_to_ip_string(socket_address: windows::Win32::Networking::WinSock::SOCKET_ADDRESS) -> Option<String> {
+fn sockaddr_to_ip_string(
+    socket_address: windows::Win32::Networking::WinSock::SOCKET_ADDRESS,
+) -> Option<String> {
     if socket_address.lpSockaddr.is_null() {
         return None;
     }
@@ -899,8 +919,8 @@ mod tests {
     #[test]
     fn format_smbios_uuid_formats_expected_shape() {
         let raw = [
-            0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
-            0xdd, 0xee, 0xff,
+            0x33, 0x22, 0x11, 0x00, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
         ];
         let value = format_smbios_uuid(&raw).expect("uuid");
         assert_eq!(value, "00112233-4455-6677-8899-aabbccddeeff");

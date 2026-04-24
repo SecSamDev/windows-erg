@@ -1,5 +1,5 @@
-use std::time::Duration;
 use std::io;
+use std::time::Duration;
 
 use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
@@ -212,4 +212,3 @@ fn to_client_access(open_mode: NamedPipeOpenMode) -> u32 {
         NamedPipeOpenMode::Duplex => GENERIC_READ.0 | GENERIC_WRITE.0,
     }
 }
-

@@ -8,17 +8,15 @@ use windows_erg::process::{Process, ProcessSpawner};
 
 fn find_explorer_pid() -> windows_erg::Result<windows_erg::types::ProcessId> {
     let mut processes = Vec::with_capacity(256);
-    Process::list_with_filter(&mut processes, |p| p.name.eq_ignore_ascii_case("explorer.exe"))?;
+    Process::list_with_filter(&mut processes, |p| {
+        p.name.eq_ignore_ascii_case("explorer.exe")
+    })?;
 
-    processes
-        .into_iter()
-        .next()
-        .map(|p| p.pid)
-        .ok_or_else(|| {
-            windows_erg::Error::Other(windows_erg::error::OtherError::new(
-                "explorer.exe was not found",
-            ))
-        })
+    processes.into_iter().next().map(|p| p.pid).ok_or_else(|| {
+        windows_erg::Error::Other(windows_erg::error::OtherError::new(
+            "explorer.exe was not found",
+        ))
+    })
 }
 
 fn main() -> windows_erg::Result<()> {
