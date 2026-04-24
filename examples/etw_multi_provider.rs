@@ -56,13 +56,13 @@ fn main() -> windows_erg::Result<()> {
                     stats.record(event);
 
                     // Print every 100th event to avoid spam
-                    if stats.total % 100 == 0 {
+                    if stats.total.is_multiple_of(100) {
                         print_event_summary(event, stats.total);
                     }
                 }
 
                 // Print stats every 1000 events
-                if stats.total % 1000 == 0 {
+                if stats.total.is_multiple_of(1000) {
                     stats.print_summary();
                 }
             }

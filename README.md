@@ -30,7 +30,7 @@ windows-erg = "0.1"
 ## Platform Requirements
 
 - Windows 10+
-- Rust 1.70+
+- Rust 1.90+
 - Targets:
   - x86_64-pc-windows-msvc
   - aarch64-pc-windows-msvc

@@ -899,7 +899,7 @@ mod tests {
     fn parse_unicode_string_with_fixed_length_no_null() {
         let prop = PropertyMeta {
             name: "Image".to_string(),
-            in_type: TDH_INTYPE_UNICODESTRING.0 as i32,
+            in_type: TDH_INTYPE_UNICODESTRING.0,
             out_type: 0,
             length: 8,
             count: 1,
@@ -922,7 +922,7 @@ mod tests {
     fn parse_ansi_string_with_fixed_length_no_null() {
         let prop = PropertyMeta {
             name: "Name".to_string(),
-            in_type: TDH_INTYPE_ANSISTRING.0 as i32,
+            in_type: TDH_INTYPE_ANSISTRING.0,
             out_type: 0,
             length: 4,
             count: 1,
@@ -945,7 +945,7 @@ mod tests {
     fn parse_uint8_array_as_binary_blob() {
         let prop = PropertyMeta {
             name: "ByteArray".to_string(),
-            in_type: TDH_INTYPE_UINT8.0 as i32,
+            in_type: TDH_INTYPE_UINT8.0,
             out_type: 0,
             length: 6,
             count: 1,
@@ -968,7 +968,7 @@ mod tests {
     fn parse_pointer_uses_declared_32bit_length() {
         let prop = PropertyMeta {
             name: "Ptr".to_string(),
-            in_type: TDH_INTYPE_POINTER.0 as i32,
+            in_type: TDH_INTYPE_POINTER.0,
             out_type: 0,
             length: 4,
             count: 1,
@@ -991,8 +991,8 @@ mod tests {
     fn parse_outtype_ipv4_from_scalar_bytes() {
         let prop = PropertyMeta {
             name: "RemoteAddress".to_string(),
-            in_type: TDH_INTYPE_UINT32.0 as i32,
-            out_type: TDH_OUTTYPE_IPV4.0 as i32,
+            in_type: TDH_INTYPE_UINT32.0,
+            out_type: TDH_OUTTYPE_IPV4.0,
             length: 4,
             count: 1,
             count_property_index: None,
@@ -1015,8 +1015,8 @@ mod tests {
     fn parse_outtype_utf8_with_fixed_length() {
         let prop = PropertyMeta {
             name: "Payload".to_string(),
-            in_type: TDH_INTYPE_UINT8.0 as i32,
-            out_type: TDH_OUTTYPE_UTF8.0 as i32,
+            in_type: TDH_INTYPE_UINT8.0,
+            out_type: TDH_OUTTYPE_UTF8.0,
             length: 5,
             count: 1,
             count_property_index: None,
@@ -1039,8 +1039,8 @@ mod tests {
     fn parse_outtype_socketaddress_ipv4() {
         let prop = PropertyMeta {
             name: "SockAddr".to_string(),
-            in_type: TDH_INTYPE_UINT8.0 as i32,
-            out_type: TDH_OUTTYPE_SOCKETADDRESS.0 as i32,
+            in_type: TDH_INTYPE_UINT8.0,
+            out_type: TDH_OUTTYPE_SOCKETADDRESS.0,
             length: 16,
             count: 1,
             count_property_index: None,
@@ -1069,7 +1069,7 @@ mod tests {
             props: vec![
                 PropertyMeta {
                     name: "Count".to_string(),
-                    in_type: TDH_INTYPE_UINT8.0 as i32,
+                    in_type: TDH_INTYPE_UINT8.0,
                     out_type: 0,
                     length: 1,
                     count: 1,
@@ -1079,7 +1079,7 @@ mod tests {
                 },
                 PropertyMeta {
                     name: "Values".to_string(),
-                    in_type: TDH_INTYPE_UINT32.0 as i32,
+                    in_type: TDH_INTYPE_UINT32.0,
                     out_type: 0,
                     length: 0,
                     count: 1,
@@ -1089,7 +1089,7 @@ mod tests {
                 },
                 PropertyMeta {
                     name: "Tail".to_string(),
-                    in_type: TDH_INTYPE_UINT8.0 as i32,
+                    in_type: TDH_INTYPE_UINT8.0,
                     out_type: 0,
                     length: 1,
                     count: 1,
@@ -1127,7 +1127,7 @@ mod tests {
             props: vec![
                 PropertyMeta {
                     name: "Len".to_string(),
-                    in_type: TDH_INTYPE_UINT8.0 as i32,
+                    in_type: TDH_INTYPE_UINT8.0,
                     out_type: 0,
                     length: 1,
                     count: 1,
@@ -1137,8 +1137,8 @@ mod tests {
                 },
                 PropertyMeta {
                     name: "Name".to_string(),
-                    in_type: TDH_INTYPE_ANSISTRING.0 as i32,
-                    out_type: TDH_OUTTYPE_UTF8.0 as i32,
+                    in_type: TDH_INTYPE_ANSISTRING.0,
+                    out_type: TDH_OUTTYPE_UTF8.0,
                     length: 0,
                     count: 1,
                     count_property_index: None,
@@ -1147,7 +1147,7 @@ mod tests {
                 },
                 PropertyMeta {
                     name: "Tail".to_string(),
-                    in_type: TDH_INTYPE_UINT8.0 as i32,
+                    in_type: TDH_INTYPE_UINT8.0,
                     out_type: 0,
                     length: 1,
                     count: 1,
@@ -1232,8 +1232,8 @@ mod tests {
     fn parse_outtype_hresult_formats_hex_string() {
         let prop = PropertyMeta {
             name: "Result".to_string(),
-            in_type: TDH_INTYPE_UINT32.0 as i32,
-            out_type: TDH_OUTTYPE_HRESULT.0 as i32,
+            in_type: TDH_INTYPE_UINT32.0,
+            out_type: TDH_OUTTYPE_HRESULT.0,
             length: 4,
             count: 1,
             count_property_index: None,
@@ -1255,8 +1255,8 @@ mod tests {
     fn parse_outtype_hexint16_formats_hex_string() {
         let prop = PropertyMeta {
             name: "Flags".to_string(),
-            in_type: TDH_INTYPE_UINT16.0 as i32,
-            out_type: TDH_OUTTYPE_HEXINT16.0 as i32,
+            in_type: TDH_INTYPE_UINT16.0,
+            out_type: TDH_OUTTYPE_HEXINT16.0,
             length: 2,
             count: 1,
             count_property_index: None,
@@ -1278,8 +1278,8 @@ mod tests {
     fn parse_outtype_port_returns_u16() {
         let prop = PropertyMeta {
             name: "Port".to_string(),
-            in_type: TDH_INTYPE_UINT16.0 as i32,
-            out_type: TDH_OUTTYPE_PORT.0 as i32,
+            in_type: TDH_INTYPE_UINT16.0,
+            out_type: TDH_OUTTYPE_PORT.0,
             length: 2,
             count: 1,
             count_property_index: None,
