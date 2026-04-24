@@ -29,20 +29,21 @@ fn main() -> windows_erg::Result<()> {
     let mut poller = NamedPipePoller::new();
     poller.seed()?;
 
-    let total_changes = poller.poll_interval_with_callback(5, Duration::from_secs(2), |round, changes| {
-        println!("Round {}:", round);
-        if changes.is_empty() {
-            println!("  no changes");
-            return;
-        }
-
-        for change in changes {
-            match change {
-                NamedPipeChange::Appeared(pipe) => println!("  appeared: {}", pipe.pipe_name),
-                NamedPipeChange::Removed(pipe) => println!("  removed: {}", pipe.pipe_name),
+    let total_changes =
+        poller.poll_interval_with_callback(5, Duration::from_secs(2), |round, changes| {
+            println!("Round {}:", round);
+            if changes.is_empty() {
+                println!("  no changes");
+                return;
             }
-        }
-    })?;
+
+            for change in changes {
+                match change {
+                    NamedPipeChange::Appeared(pipe) => println!("  appeared: {}", pipe.pipe_name),
+                    NamedPipeChange::Removed(pipe) => println!("  removed: {}", pipe.pipe_name),
+                }
+            }
+        })?;
 
     println!("Total changes observed: {}", total_changes);
 

@@ -8,6 +8,8 @@ Ergonomic, idiomatic Rust wrappers for Windows APIs.
 
 windows-erg provides safe, high-level APIs on top of windows-rs for common Windows system programming tasks.
 
+See [CHANGELOG.md](CHANGELOG.md) for the current documented release snapshot and future release notes.
+
 For contributors and coding agents: read CONTEXT.md first.
 
 ## Highlights
@@ -302,58 +304,17 @@ windows-erg = { version = "0.1", features = ["serde"] }
 
 Thank you for your interest in contributing!
 
-### Before You Start
+For comprehensive contribution guidelines, code standards, and the complete CI/CD checklist that all changes must pass, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-1. **Read [CONTEXT.md](CONTEXT.md)** — Contains critical coding standards, error handling patterns, buffer management conventions, and RAII handle rules. This is non-negotiable.
-2. **Check existing patterns** — Review `src/registry/mod.rs` and `src/process/processes.rs` as complete reference implementations before building new features.
-3. **Understand module structure** — Each module follows a consistent pattern: public API in `mod.rs`, internal utilities in submodules, tests alongside implementations.
+**Quick workflow:**
 
-### Making Changes
+1. Read [CONTEXT.md](CONTEXT.md) — critical coding patterns and standards
+2. Read [CONTRIBUTING.md](CONTRIBUTING.md) — CI checks and submission workflow
+3. Follow the code review checklist in [CONTRIBUTING.md](CONTRIBUTING.md)
+4. Run local pre-push validation (see [CONTRIBUTING.md](CONTRIBUTING.md))
+5. Submit PR
 
-Keep changes minimal and focused. One feature or fix per PR.
-
-Match existing module patterns:
-
-- Use `Cow<'static, str>` for error messages — never plain `String`
-- Implement RAII with `Drop` for all Windows handles
-- Provide `_with_buffer` and `_with_filter` variants for collection APIs
-- Use structured error types from `src/error.rs`, not ad-hoc errors
-
-### Error Handling
-
-```rust
-// Wrong
-Error::InvalidParameter("invalid value".to_string())
-
-// Correct
-Error::InvalidParameter(InvalidParameterError::new("param_name", "why it's invalid"))
-```
-
-### RAII and Handle Safety
-
-- All Windows handles must implement `Drop`
-- Use a `close_on_drop` flag for predefined handles (e.g., `INVALID_HANDLE_VALUE`)
-- No manual `CloseHandle` calls in user code — cleanup is always automatic via `Drop`
-
-### Validation Before Submitting
-
-```powershell
-cargo check
-cargo test --lib
-# Run Phase 1 sanity pass
-cargo run --example process_basics
-cargo run --example registry_write
-```
-
-### Code Review Checklist
-
-- Follows patterns in CONTEXT.md?
-- All Windows handles are RAII-protected?
-- Error messages use `Cow<'static, str>`, not `String`?
-- Collection APIs provide `_with_buffer` and `_with_filter` variants?
-- Phase 1 examples still pass?
-
-For questions or design discussions, open an issue before submitting code.
+For questions, open an issue before submitting code.
 
 ## License
 
