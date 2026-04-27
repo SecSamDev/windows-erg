@@ -15,6 +15,7 @@ use windows::Win32::Storage::FileSystem::{
     FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE,
 };
 use windows::Win32::System::IO::IO_STATUS_BLOCK;
+use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
 use windows::core::PWSTR;
 
 use crate::error::{Error, PipeError, PipeIoError, Result};
@@ -23,6 +24,7 @@ use crate::utils::to_utf16_nul;
 use super::types::{
     NamedPipeChange, NamedPipeInfo, NamedPipeLocalInfo, PipeName, filetime_to_system_time,
 };
+use crate::types::ProcessId;
 
 const NAMED_PIPE_DIRECTORY_PATH: &str = r"\Device\NamedPipe\";
 const NAMED_PIPE_DIRECTORY_RESOURCE: &str = r"\Device\NamedPipe";
@@ -293,6 +295,15 @@ fn query_pipe_local_info(relative_name_utf16: &[u16]) -> Result<NamedPipeLocalIn
         ));
     }
 
+    let server_process_id = unsafe {
+        let mut pid: u32 = 0;
+        if GetNamedPipeServerProcessId(pipe_handle.raw(), &mut pid).is_ok() {
+            Some(ProcessId(pid))
+        } else {
+            None
+        }
+    };
+
     Ok(NamedPipeLocalInfo {
         named_pipe_type: local_info.NamedPipeType,
         named_pipe_configuration: local_info.NamedPipeConfiguration,
@@ -304,6 +315,7 @@ fn query_pipe_local_info(relative_name_utf16: &[u16]) -> Result<NamedPipeLocalIn
         write_quota_available: local_info.WriteQuotaAvailable,
         named_pipe_state: local_info.NamedPipeState,
         named_pipe_end: local_info.NamedPipeEnd,
+        server_process_id,
     })
 }
 

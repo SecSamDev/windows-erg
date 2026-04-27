@@ -116,6 +116,8 @@ pub struct NamedPipeLocalInfo {
     pub named_pipe_state: u32,
     /// Whether this handle points at server or client end.
     pub named_pipe_end: u32,
+    /// PID of the server process that created this pipe, if available.
+    pub server_process_id: Option<crate::types::ProcessId>,
 }
 
 /// Change detected between named pipe snapshots.
