@@ -8,6 +8,8 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_NOT_ALL_ASSIGNED, GetLastError};
 use windows::Win32::NetworkManagement::IpHelper::{
     GAA_FLAG_INCLUDE_PREFIX, GET_ADAPTERS_ADDRESSES_FLAGS, GetAdaptersAddresses,
     IP_ADAPTER_ADDRESSES_LH,
@@ -15,25 +17,35 @@ use windows::Win32::NetworkManagement::IpHelper::{
 use windows::Win32::Networking::WinSock::{
     AF_INET, AF_INET6, AF_UNSPEC, SOCKADDR_IN, SOCKADDR_IN6,
 };
+use windows::Win32::Security::{
+    AdjustTokenPrivileges, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
+    TOKEN_PRIVILEGES, TOKEN_QUERY,
+};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE,
     GetDiskFreeSpaceExW, GetLogicalDriveStringsW, GetVolumeInformationW, OPEN_EXISTING,
 };
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::{GET_LENGTH_INFORMATION, IOCTL_DISK_GET_LENGTH_INFO};
+use windows::Win32::System::Shutdown::{
+    InitiateSystemShutdownExW, SHTDN_REASON_FLAG_PLANNED, SHTDN_REASON_MAJOR_OTHER,
+    SHTDN_REASON_MINOR_OTHER, SHUTDOWN_REASON,
+};
 use windows::Win32::System::SystemInformation::{
     FIRMWARE_TABLE_PROVIDER, GetSystemFirmwareTable, OSVERSIONINFOW,
 };
-use windows::core::PCWSTR;
+use windows::Win32::System::Threading::GetCurrentProcess;
+use windows::Win32::System::Threading::OpenProcessToken;
+use windows::core::{HRESULT, PCWSTR, PWSTR};
 
-use crate::error::{Error, Result, WindowsApiError};
+use crate::error::{AccessDeniedError, Error, Result, WindowsApiError};
 use crate::registry::{self, Hive};
 use crate::utils::{OwnedHandle, pwstr_to_string, to_utf16_nul};
 
 pub use types::{
     BiosInfo, GuidInfo, HostIdentity, HostSnapshot, LogicalDiskInfo, MachineGuid,
-    NetworkInterfaceInfo, OsInfo, PhysicalDiskInfo, SnapshotSection, SnapshotSectionError,
-    UserInfo,
+    NetworkInterfaceInfo, OsInfo, PhysicalDiskInfo, PowerAction, PowerActionOptions,
+    SnapshotSection, SnapshotSectionError, UserInfo,
 };
 
 /// Collect a host inventory snapshot.
@@ -582,6 +594,149 @@ where
     Ok(out_users.len())
 }
 
+/// Shut down the local machine, enabling `SeShutdownPrivilege` for the current process.
+pub fn shutdown(options: &PowerActionOptions) -> Result<()> {
+    enable_shutdown_privilege()?;
+    shutdown_with_enabled_privilege(options)
+}
+
+/// Shut down the local machine, assuming `SeShutdownPrivilege` is already enabled.
+pub fn shutdown_with_enabled_privilege(options: &PowerActionOptions) -> Result<()> {
+    execute_power_action(PowerAction::Shutdown, options)
+}
+
+/// Restart the local machine, enabling `SeShutdownPrivilege` for the current process.
+pub fn restart(options: &PowerActionOptions) -> Result<()> {
+    enable_shutdown_privilege()?;
+    restart_with_enabled_privilege(options)
+}
+
+/// Restart the local machine, assuming `SeShutdownPrivilege` is already enabled.
+pub fn restart_with_enabled_privilege(options: &PowerActionOptions) -> Result<()> {
+    execute_power_action(PowerAction::Restart, options)
+}
+
+fn execute_power_action(action: PowerAction, options: &PowerActionOptions) -> Result<()> {
+    let mut comment = options.comment.as_ref().and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| to_utf16_nul(trimmed))
+    });
+
+    let message = comment
+        .as_mut()
+        .map_or(PWSTR::null(), |value| PWSTR(value.as_mut_ptr()));
+
+    unsafe {
+        InitiateSystemShutdownExW(
+            PWSTR::null(),
+            message,
+            options.timeout_secs,
+            options.force_apps_closed,
+            matches!(action, PowerAction::Restart),
+            shutdown_reason(options),
+        )
+    }
+    .map_err(|e| map_power_api_error(e, action, "InitiateSystemShutdownExW"))
+}
+
+fn enable_shutdown_privilege() -> Result<()> {
+    let mut token = HANDLE(std::ptr::null_mut());
+    unsafe {
+        OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        )
+    }
+    .map_err(|e| {
+        map_power_api_error(
+            e,
+            PowerAction::Shutdown,
+            "OpenProcessToken for SeShutdownPrivilege",
+        )
+    })?;
+
+    let token = OwnedHandle::new(token);
+
+    let mut token_privileges = TOKEN_PRIVILEGES {
+        PrivilegeCount: 1,
+        Privileges: Default::default(),
+    };
+
+    let privilege_name = to_utf16_nul("SeShutdownPrivilege");
+    unsafe {
+        LookupPrivilegeValueW(
+            None,
+            PCWSTR(privilege_name.as_ptr()),
+            &mut token_privileges.Privileges[0].Luid,
+        )
+    }
+    .map_err(|e| {
+        map_power_api_error(
+            e,
+            PowerAction::Shutdown,
+            "LookupPrivilegeValueW for SeShutdownPrivilege",
+        )
+    })?;
+
+    token_privileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+    unsafe { AdjustTokenPrivileges(token.raw(), false, Some(&token_privileges), 0, None, None) }
+        .map_err(|e| {
+            map_power_api_error(
+                e,
+                PowerAction::Shutdown,
+                "AdjustTokenPrivileges for SeShutdownPrivilege",
+            )
+        })?;
+
+    let last_error = unsafe { GetLastError() };
+    if last_error == ERROR_NOT_ALL_ASSIGNED {
+        return Err(Error::AccessDenied(AccessDeniedError::with_reason(
+            "local machine",
+            "shutdown privilege",
+            "Privilege 'SeShutdownPrivilege' was not assigned to current token",
+        )));
+    }
+
+    Ok(())
+}
+
+fn shutdown_reason(options: &PowerActionOptions) -> SHUTDOWN_REASON {
+    let mut reason = options
+        .reason_code
+        .unwrap_or(SHTDN_REASON_MAJOR_OTHER.0 | SHTDN_REASON_MINOR_OTHER.0);
+
+    if options.planned {
+        reason |= SHTDN_REASON_FLAG_PLANNED.0;
+    }
+
+    SHUTDOWN_REASON(reason)
+}
+
+fn map_power_api_error(err: windows::core::Error, action: PowerAction, context: &str) -> Error {
+    let code = err.code().0;
+    let access_denied_hresult = HRESULT::from_win32(ERROR_ACCESS_DENIED.0).0;
+
+    if code == access_denied_hresult || code == ERROR_ACCESS_DENIED.0 as i32 {
+        let operation = match action {
+            PowerAction::Shutdown => "shutdown",
+            PowerAction::Restart => "restart",
+        };
+
+        return Error::AccessDenied(AccessDeniedError::with_reason(
+            "local machine",
+            operation,
+            Cow::Owned(format!("Access denied while calling {context}")),
+        ));
+    }
+
+    Error::WindowsApi(WindowsApiError::with_context(
+        err,
+        Cow::Owned(context.to_string()),
+    ))
+}
+
 fn section_error(section: SnapshotSection, err: Error) -> SnapshotSectionError {
     SnapshotSectionError {
         section,
@@ -889,8 +1044,11 @@ fn format_mac(bytes: &[u8], len: usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_smbios_uuid, parse_multi_sz, resolve_product_name_from_registry,
-        username_from_profile_path,
+        PowerActionOptions, format_smbios_uuid, parse_multi_sz, resolve_product_name_from_registry,
+        shutdown_reason, username_from_profile_path,
+    };
+    use windows::Win32::System::Shutdown::{
+        SHTDN_REASON_FLAG_PLANNED, SHTDN_REASON_MAJOR_OTHER, SHTDN_REASON_MINOR_OTHER,
     };
 
     #[test]
@@ -966,5 +1124,37 @@ mod tests {
         );
 
         assert_eq!(value.as_deref(), Some("Windows 11 Pro"));
+    }
+
+    #[test]
+    fn shutdown_reason_uses_default_other_reason() {
+        let options = PowerActionOptions::default();
+        assert_eq!(
+            shutdown_reason(&options).0,
+            SHTDN_REASON_MAJOR_OTHER.0 | SHTDN_REASON_MINOR_OTHER.0
+        );
+    }
+
+    #[test]
+    fn shutdown_reason_sets_planned_flag() {
+        let options = PowerActionOptions {
+            planned: true,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            shutdown_reason(&options).0,
+            (SHTDN_REASON_MAJOR_OTHER.0 | SHTDN_REASON_MINOR_OTHER.0) | SHTDN_REASON_FLAG_PLANNED.0
+        );
+    }
+
+    #[test]
+    fn shutdown_reason_preserves_custom_reason_code() {
+        let options = PowerActionOptions {
+            reason_code: Some(0x0004_0000),
+            ..Default::default()
+        };
+
+        assert_eq!(shutdown_reason(&options).0, 0x0004_0000);
     }
 }

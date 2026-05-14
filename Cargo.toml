@@ -32,6 +32,7 @@ windows = { version = "0.58", features = [
     "Win32_System_Kernel",
     "Win32_System_Pipes",
     "Win32_System_SystemServices",
+    "Win32_System_Shutdown",
     "Win32_System_Services",
     "Win32_System_IO",
     "Win32_System_Ioctl",
@@ -169,6 +170,10 @@ path = "examples/service_enumerate.rs"
 [[example]]
 name = "system_snapshot"
 path = "examples/system_snapshot.rs"
+
+[[example]]
+name = "system_power_control"
+path = "examples/system_power_control.rs"
 
 [[example]]
 name = "desktop_windows"

@@ -169,3 +169,27 @@ pub struct UserInfo {
     /// Data source label (for example: profile_list/current_user).
     pub source: &'static str,
 }
+
+/// Power action kind for system power control operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PowerAction {
+    /// Shut down the local machine.
+    Shutdown,
+    /// Restart the local machine.
+    Restart,
+}
+
+/// Options for local-machine shutdown or restart operations.
+#[derive(Debug, Clone, Default)]
+pub struct PowerActionOptions {
+    /// Force-close running applications.
+    pub force_apps_closed: bool,
+    /// Delay in seconds before executing the action.
+    pub timeout_secs: u32,
+    /// Mark the action as planned in shutdown reason flags.
+    pub planned: bool,
+    /// Optional shutdown reason code. If `None`, a default reason is used.
+    pub reason_code: Option<u32>,
+    /// Optional shutdown comment displayed to interactive users.
+    pub comment: Option<String>,
+}

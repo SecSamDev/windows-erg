@@ -188,6 +188,7 @@ See examples:
 - examples/service_basics.rs
 - examples/service_enumerate.rs
 - examples/security_permissions.rs
+- examples/system_power_control.rs
 
 Run one example:
 
@@ -272,6 +273,7 @@ cargo run --example process_wait_any             # multiple timeout scenarios (~
 cargo run --example service_basics               # may restart/stop Spooler service
 cargo run --example etw_stop_with_wait           # admin + kernel provider required
 cargo run --example raw_file_copy                # admin + raw file I/O required
+cargo run --example system_power_control -- restart --force --timeout 60 --execute  # admin + triggers machine restart/shutdown
 ```
 
 ### Quick Validation
