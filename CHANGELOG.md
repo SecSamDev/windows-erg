@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 This changelog currently captures the documented 0.1.0 feature surface that is present in the repository today. Future updates should append release entries rather than rewriting this snapshot.
 
+## [0.2.0] - 2026-05-22
+
+### Added
+
+- New `system` module functionality for host snapshot collection via `system::snapshot()`, including host identity, OS details, machine/firmware GUIDs, BIOS metadata, logical and physical disk inventory, network interfaces, and user/account discovery.
+- New resilient snapshot behavior with per-section partial-failure reporting through `section_errors`, allowing snapshot collection to continue even when individual sections fail.
+- New system power control APIs for local machine shutdown and restart (`system::shutdown`, `system::restart`) with typed `PowerActionOptions` support for timeout, force-close, planned flag, reason code, and optional user-facing comment.
+
 ## [0.1.0] - 2026-04-24
 
 ### Added
@@ -20,7 +28,6 @@ This changelog currently captures the documented 0.1.0 feature surface that is p
 - Security descriptor and ACL modeling APIs with SID parsing, typed ACE and access-mask types, permission edit planning, dry-run diffs, and file/registry application backends.
 - Pipe APIs for named pipe servers and clients, anonymous pipes, child-process stdio integration helpers, named-pipe enumeration, local information queries, and stateful polling for appearance or removal changes.
 - Service Control Manager APIs for connecting to the SCM, listing services, querying status, and starting, stopping, or restarting services through RAII-backed handles.
-- System inventory APIs for collecting host snapshots including identity, OS details, GUIDs, BIOS information, logical and physical disks, network interfaces, and users while preserving per-section errors.
 - Shared wait primitives for manual-reset and auto-reset events, named events, wait-any, wait-all, timeout-aware waiting, and integration across modules.
 - Example programs covering process, registry, desktop, event log, ETW, proxy, service, pipe, mitigation, file, security, system, and wait scenarios.
 

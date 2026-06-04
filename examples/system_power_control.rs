@@ -5,12 +5,16 @@ use windows_erg::system::{
 
 fn print_usage() {
     println!("Usage:");
-    println!("  cargo run --example system_power_control -- <shutdown|restart> [--force] [--planned] [--timeout <secs>] [--comment <text>] [--preenabled] --execute");
+    println!(
+        "  cargo run --example system_power_control -- <shutdown|restart> [--force] [--planned] [--timeout <secs>] [--comment <text>] [--preenabled] --execute"
+    );
     println!();
     println!("Safety:");
     println!("  This example performs NO power action unless --execute is supplied.");
     println!("  Run in an elevated terminal when testing on a real system.");
-    println!("  Use --preenabled to call the variant that expects SeShutdownPrivilege already enabled.");
+    println!(
+        "  Use --preenabled to call the variant that expects SeShutdownPrivilege already enabled."
+    );
 }
 
 fn parse_options(args: &[String]) -> Result<(bool, bool, PowerActionOptions, bool), String> {
@@ -83,11 +87,17 @@ fn main() -> windows_erg::Result<()> {
         }
     };
 
-    println!("action: {}", if is_restart { "restart" } else { "shutdown" });
+    println!(
+        "action: {}",
+        if is_restart { "restart" } else { "shutdown" }
+    );
     println!("force: {}", options.force_apps_closed);
     println!("planned: {}", options.planned);
     println!("timeout_secs: {}", options.timeout_secs);
-    println!("comment: {}", options.comment.as_deref().unwrap_or("<none>"));
+    println!(
+        "comment: {}",
+        options.comment.as_deref().unwrap_or("<none>")
+    );
     println!(
         "permission model: {}",
         if preenabled {
