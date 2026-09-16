@@ -42,4 +42,34 @@ impl PermissionTarget {
             }
         }
     }
+
+    /// Replace the DACL with the one in `sddl` (for example
+    /// `D:(A;OICI;FA;;;SY)`) and protect it from inheritance. Owner and group
+    /// are unchanged. Only file targets are supported.
+    pub fn set_protected_dacl_sddl(&self, sddl: &str) -> Result<()> {
+        match self {
+            PermissionTarget::FilePath(path) => backends::file::set_protected_dacl(path, sddl),
+            PermissionTarget::RegistryPath(path) => Err(unsupported(path, "set_protected_dacl")),
+        }
+    }
+
+    /// The current DACL as SDDL (`D:...`), including the `P` flag when it is
+    /// protected. Only file targets are supported.
+    pub fn dacl_sddl(&self) -> Result<String> {
+        match self {
+            PermissionTarget::FilePath(path) => backends::file::dacl_sddl(path),
+            PermissionTarget::RegistryPath(path) => Err(unsupported(path, "dacl_sddl")),
+        }
+    }
+}
+
+fn unsupported(path: &str, operation: &'static str) -> crate::Error {
+    use crate::error::{SecurityError, SecurityUnsupportedError};
+    crate::Error::Security(SecurityError::Unsupported(
+        SecurityUnsupportedError::with_reason(
+            path.to_string(),
+            operation,
+            "only file targets are supported",
+        ),
+    ))
 }

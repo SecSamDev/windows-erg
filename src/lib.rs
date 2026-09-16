@@ -44,12 +44,14 @@
 //! - [`file`] - Raw file operations
 //! - [`pipes`] - Windows named and anonymous pipe API
 //! - [`console`] - Console control signal (Ctrl+C) handling
+//! - [`crypto`] - SHA-256 and ECDSA P-256 through CNG
 //! - [`service`] - Windows Service Control Manager operations
 
 #![warn(missing_docs)]
 #![cfg(windows)]
 
 pub mod console;
+pub mod crypto;
 pub mod desktop;
 pub mod error;
 pub mod etw;

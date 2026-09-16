@@ -557,6 +557,74 @@ impl NamedPipeServer {
             map_pipe_windows_error("disconnect", Some(self.endpoint.pipe_name()), code)
         })
     }
+
+    /// Whether the connected client runs with the BUILTIN\Administrators
+    /// group enabled, i.e. elevated (or as SYSTEM). A UAC-filtered admin
+    /// token counts as not elevated.
+    ///
+    /// Windows only allows impersonation after data has been read from the
+    /// pipe, so call this after the client's first message.
+    pub fn client_is_elevated_admin(&self) -> Result<bool> {
+        use windows::Win32::Foundation::{BOOL, HANDLE};
+        use windows::Win32::Security::{
+            CheckTokenMembership, CreateWellKnownSid, PSID, SECURITY_MAX_SID_SIZE, TOKEN_QUERY,
+            WinBuiltinAdministratorsSid,
+        };
+        use windows::Win32::System::Pipes::ImpersonateNamedPipeClient;
+        use windows::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
+
+        let context = |api: &'static str| {
+            move |e: windows::core::Error| {
+                Error::WindowsApi(crate::error::WindowsApiError::with_context(e, api))
+            }
+        };
+
+        // SAFETY: the handle is a connected server pipe.
+        unsafe { ImpersonateNamedPipeClient(self.endpoint.raw_handle()) }
+            .map_err(context("ImpersonateNamedPipeClient"))?;
+        let _revert = RevertOnDrop;
+
+        let mut token = HANDLE::default();
+        // SAFETY: the thread is impersonating; `openasself` uses the server's
+        // own identity to open the client's token.
+        unsafe { OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, true, &mut token) }
+            .map_err(context("OpenThreadToken"))?;
+        let token = crate::utils::OwnedHandle::new(token);
+
+        let mut sid = [0u8; SECURITY_MAX_SID_SIZE as usize];
+        let mut sid_len = SECURITY_MAX_SID_SIZE;
+        let sid_ptr = PSID(sid.as_mut_ptr().cast());
+        // SAFETY: `sid` holds SECURITY_MAX_SID_SIZE bytes, enough for any SID.
+        unsafe {
+            CreateWellKnownSid(
+                WinBuiltinAdministratorsSid,
+                PSID::default(),
+                sid_ptr,
+                &mut sid_len,
+            )
+        }
+        .map_err(context("CreateWellKnownSid"))?;
+
+        let mut member = BOOL(0);
+        // SAFETY: `token` is an impersonation token opened with TOKEN_QUERY and
+        // `sid_ptr` points at a valid SID.
+        unsafe { CheckTokenMembership(token.raw(), sid_ptr, &mut member) }
+            .map_err(context("CheckTokenMembership"))?;
+        Ok(member.as_bool())
+    }
+}
+
+/// Ends impersonation on drop.
+struct RevertOnDrop;
+
+impl Drop for RevertOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: plain Win32 call without arguments.
+        if unsafe { windows::Win32::Security::RevertToSelf() }.is_err() {
+            // Continuing would run server code with the client's identity.
+            std::process::abort();
+        }
+    }
 }
 
 fn duration_to_wait_ms(timeout: Duration) -> u32 {

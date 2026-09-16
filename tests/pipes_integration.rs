@@ -99,6 +99,48 @@ fn named_pipe_server_client_roundtrip() -> windows_erg::Result<()> {
 }
 
 #[test]
+fn client_admin_check_matches_the_client_token() -> windows_erg::Result<()> {
+    let pipe_name = unique_pipe_name("client-admin");
+    let server_cfg = NamedPipeServerBuilder::new()
+        .pipe_name(pipe_name.clone())
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .pipe_type(NamedPipeType::Byte)
+        .build()?;
+    let client_cfg = NamedPipeClientBuilder::new()
+        .pipe_name(pipe_name.clone())
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .connect_timeout(Duration::from_secs(3))
+        .build()?;
+
+    let server_thread = thread::spawn(move || -> windows_erg::Result<bool> {
+        let mut server = server_cfg.create()?;
+        server.connect()?;
+        let mut byte = [0u8; 1];
+        // Impersonation needs data read from the pipe first.
+        server.read_exact(&mut byte).expect("server read succeeds");
+        let is_admin = server.client_is_elevated_admin();
+        server.write_all(b"k").expect("server write succeeds");
+        server.disconnect()?;
+        is_admin
+    });
+
+    thread::sleep(Duration::from_millis(30));
+    let mut client = client_cfg.connect()?;
+    client
+        .write_all(b"?")
+        .map_err(|e| io_to_error("client write", e))?;
+    let mut ack = [0u8; 1];
+    client
+        .read_exact(&mut ack)
+        .map_err(|e| io_to_error("client read", e))?;
+
+    let is_admin = server_thread.join().expect("server thread")?;
+    // Same process on both ends: the client token is this process's token.
+    assert_eq!(is_admin, windows_erg::is_elevated()?);
+    Ok(())
+}
+
+#[test]
 fn named_pipe_list_includes_created_pipe() -> windows_erg::Result<()> {
     let pipe_name = unique_pipe_name("list");
 

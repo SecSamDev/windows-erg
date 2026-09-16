@@ -8,6 +8,36 @@ use windows_erg::security::{
 use windows_erg::{Error, error::OtherError};
 
 #[test]
+fn protected_directory_dacl_is_applied_and_read_back() -> windows_erg::Result<()> {
+    let dir =
+        std::env::temp_dir().join(format!("windows_erg_protected_dacl_{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("child"))
+        .map_err(|e| Error::Other(OtherError::new(format!("failed to create temp dir: {e}"))))?;
+    let target = PermissionTarget::file(dir.to_string_lossy().to_string());
+
+    // SYSTEM full control, Administrators read; nothing inherited.
+    let applied = target.set_protected_dacl_sddl("D:(A;OICI;FA;;;SY)(A;OICI;FRFX;;;BA)");
+    // The owner may always read and rewrite the DACL, even without an ACE.
+    let sddl = target.dacl_sddl();
+    let restored = target.set_protected_dacl_sddl("D:(A;OICI;FA;;;WD)");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    applied?;
+    restored?;
+    let sddl = sddl?;
+    assert!(sddl.starts_with("D:P"), "{sddl}");
+    assert!(sddl.contains("(A;OICI;FA;;;SY)"), "{sddl}");
+    assert!(sddl.contains(";;;BA)"), "{sddl}");
+    assert!(!sddl.contains(";;;BU)"), "{sddl}");
+    assert!(
+        PermissionTarget::registry(r"HKCU\Software")
+            .dacl_sddl()
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn file_descriptor_round_trip_read_write() -> windows_erg::Result<()> {
     let path = std::env::temp_dir().join("windows_erg_security_roundtrip.txt");
     std::fs::write(&path, b"security test").map_err(|e| {

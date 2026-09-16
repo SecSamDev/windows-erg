@@ -214,6 +214,139 @@ pub(crate) fn write_descriptor(path: &str, descriptor: &SecurityDescriptor) -> R
     }
 }
 
+/// Replace the DACL of `path` with the one in `sddl` and mark it protected,
+/// so nothing is inherited from the parent. Owner and group are unchanged.
+pub(crate) fn set_protected_dacl(path: &str, sddl: &str) -> Result<()> {
+    use windows::Win32::Security::PROTECTED_DACL_SECURITY_INFORMATION;
+
+    let sddl_wide = to_utf16_nul(sddl);
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: `sddl_wide` is NUL-terminated; the result is freed by `LocalDescriptor`.
+    unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            PCWSTR(sddl_wide.as_ptr()),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            None,
+        )
+    }
+    .map_err(|e| {
+        Error::WindowsApi(WindowsApiError::with_context(
+            e,
+            "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+        ))
+    })?;
+    let descriptor = LocalDescriptor(descriptor);
+
+    let mut dacl_present = false.into();
+    let mut dacl: *mut ACL = std::ptr::null_mut();
+    let mut dacl_defaulted = false.into();
+    // SAFETY: `descriptor` is a valid self-relative descriptor.
+    unsafe {
+        GetSecurityDescriptorDacl(
+            descriptor.0,
+            &mut dacl_present,
+            &mut dacl,
+            &mut dacl_defaulted,
+        )
+    }
+    .map_err(|e| {
+        Error::WindowsApi(WindowsApiError::with_context(
+            e,
+            "GetSecurityDescriptorDacl",
+        ))
+    })?;
+    if !dacl_present.as_bool() || dacl.is_null() {
+        return Err(Error::Security(SecurityError::Unsupported(
+            SecurityUnsupportedError::with_reason(
+                path.to_string(),
+                "set_protected_dacl",
+                "SDDL has no DACL",
+            ),
+        )));
+    }
+
+    let path_wide = to_utf16_nul(path);
+    // SAFETY: `dacl` points into `descriptor`, which outlives the call.
+    let result = unsafe {
+        SetNamedSecurityInfoW(
+            PWSTR(path_wide.as_ptr() as *mut u16),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            PSID::default(),
+            PSID::default(),
+            Some(dacl as *const ACL),
+            None,
+        )
+    };
+    if result.0 == 0 {
+        Ok(())
+    } else {
+        map_file_security_status(path, "SetNamedSecurityInfoW", result.0 as i32)
+    }
+}
+
+/// The DACL of `path` as SDDL (`D:` part only), including the `P` flag when
+/// the DACL is protected.
+pub(crate) fn dacl_sddl(path: &str) -> Result<String> {
+    let path_wide = to_utf16_nul(path);
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: `path_wide` is NUL-terminated; the result is freed by `LocalDescriptor`.
+    let result = unsafe {
+        GetNamedSecurityInfoW(
+            PCWSTR(path_wide.as_ptr()),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            None,
+            None,
+            &mut descriptor,
+        )
+    };
+    if result.0 != 0 {
+        return map_file_security_status(path, "GetNamedSecurityInfoW", result.0 as i32);
+    }
+    let descriptor = LocalDescriptor(descriptor);
+
+    let mut sddl = PWSTR::null();
+    let mut sddl_len = 0u32;
+    // SAFETY: `descriptor` is valid; the string is freed below.
+    unsafe {
+        ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor.0,
+            SDDL_REVISION_1,
+            DACL_SECURITY_INFORMATION,
+            &mut sddl,
+            Some(&mut sddl_len),
+        )
+    }
+    .map_err(|e| {
+        Error::WindowsApi(WindowsApiError::with_context(
+            e,
+            "ConvertSecurityDescriptorToStringSecurityDescriptorW",
+        ))
+    })?;
+    let text = pwstr_to_string_len(sddl, sddl_len as usize);
+    // SAFETY: allocated by the conversion above and not used again.
+    unsafe {
+        let _ = LocalFree(HLOCAL(sddl.0.cast()));
+    }
+    Ok(text.trim_end_matches('\0').to_string())
+}
+
+/// Security descriptor allocated with `LocalAlloc`, freed on drop.
+struct LocalDescriptor(PSECURITY_DESCRIPTOR);
+
+impl Drop for LocalDescriptor {
+    fn drop(&mut self) {
+        // SAFETY: the descriptor was allocated by a Win32 API with LocalAlloc.
+        unsafe {
+            let _ = LocalFree(HLOCAL(self.0.0));
+        }
+    }
+}
+
 fn map_file_security_status<T>(resource: &str, operation: &str, code: i32) -> Result<T> {
     if code == 5 {
         return Err(Error::AccessDenied(

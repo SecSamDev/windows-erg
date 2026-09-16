@@ -146,6 +146,7 @@ src/
   desktop/          ← window enumeration + tray icons (windows, tray, types)
   service/          ← SCM wrappers (manager, service, status, types)
   console/          ← console control signals (Ctrl+C → Wait)
+  crypto/           ← CNG: sha256, ECDSA P-256 sign/verify (mod)
   system/           ← system snapshot (mod, types)
   utils/            ← internal helpers (handles, strings, io error conversion)
   wait/             ← wait handle primitives (mod)
@@ -159,14 +160,15 @@ src/
 | process | ✅ stable | buffer patterns, ImagePath caching, PEB access |
 | evt | ✅ stable | query, streaming, serde (feature-gated) |
 | etw | ✅ functional | stubbed: stack traces, thread context, CPU samples, process filter; image decoder v0–v2 missing |
-| security | ✅ stable | dry-run ACL editing, SID parsing |
+| security | ✅ stable | dry-run ACL editing, SID parsing; `PermissionTarget::set_protected_dacl_sddl` / `dacl_sddl` replace or read a file/dir DACL as SDDL (protected = no inheritance) |
 | service | ✅ stable | least-privilege default (SERVICE_QUERY_STATUS); use plain u32 flags |
 | desktop | ✅ stable | window enumeration, tray icon lifecycle |
 | proxy | ✅ stable | system proxy + WinHTTP URL-based resolution |
 | mitigation | ✅ stable | query + apply; set only applies to current process |
 | file | ✅ stable | raw NTFS file copy via retrieval pointers |
-| pipes | ✅ stable | named pipe server/client, anonymous pipes; server I/O is overlapped with optional timeout, `flush` drains the pipe, reads return `Ok(0)` when the peer closes; `first_instance(true)` prevents name squatting; clients request data-only access (no `FILE_CREATE_PIPE_INSTANCE`), so servers can grant exactly that |
+| pipes | ✅ stable | named pipe server/client, anonymous pipes; server I/O is overlapped with optional timeout, `flush` drains the pipe, reads return `Ok(0)` when the peer closes; `client_is_elevated_admin()` impersonates the client (only after a read) and checks BUILTIN\Administrators is enabled, reverting on drop (aborts if revert fails); `first_instance(true)` prevents name squatting; clients request data-only access (no `FILE_CREATE_PIPE_INSTANCE`), so servers can grant exactly that |
 | system | ✅ stable | snapshot of host metrics, known folders |
+| crypto | ✅ stable | `sha256`, `EcdsaP256PublicKey::verify`, `EcdsaP256PrivateKey::{generate, sign, to_blob, from_blob}`; P1363 `r‖s` signatures; keys hold bytes only (CNG pseudo-handles, handle per call) |
 | console | ✅ stable | `signal_on_ctrl` sets a `Wait` on Ctrl+C/close/shutdown |
 | wait | ✅ stable | manual reset events, wait_any, wait_all |
 

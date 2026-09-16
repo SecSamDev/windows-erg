@@ -47,6 +47,7 @@ windows = { version = "0.58", features = [
     # Security
     "Win32_Security",
     "Win32_Security_Authorization",
+    "Win32_Security_Cryptography",
     
     # Event Log & ETW
     "Win32_System_EventLog",
