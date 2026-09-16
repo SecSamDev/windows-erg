@@ -580,3 +580,87 @@ fn read_after_peer_closes_returns_end_of_stream() -> windows_erg::Result<()> {
     assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
     Ok(())
 }
+
+#[test]
+fn first_instance_refuses_an_existing_pipe_name() -> windows_erg::Result<()> {
+    let pipe_name = unique_pipe_name("first-instance");
+    let builder = || {
+        NamedPipeServerBuilder::new()
+            .pipe_name(pipe_name.clone())
+            .open_mode(NamedPipeOpenMode::Duplex)
+            .pipe_type(NamedPipeType::Byte)
+            .max_instances(4)
+    };
+
+    let _squatter = builder().build()?.create()?;
+    assert!(builder().first_instance(true).build()?.create().is_err());
+    // Without the flag the second instance joins the existing pipe.
+    let _second = builder().build()?.create()?;
+    Ok(())
+}
+
+#[test]
+fn client_connects_with_data_only_access() -> windows_erg::Result<()> {
+    // SYSTEM and Administrators: full access. Everyone: read/write data only,
+    // without FILE_CREATE_PIPE_INSTANCE.
+    let full = AccessMask::from_bits(0x001F_01FF);
+    let dacl = Dacl::from_entries(vec![
+        Ace::new(Sid::parse("S-1-5-18")?, AceType::Allow, full),
+        Ace::new(Sid::parse("S-1-5-32-544")?, AceType::Allow, full),
+        Ace::new(
+            Sid::parse("S-1-1-0")?,
+            AceType::Allow,
+            AccessMask::from_bits(0x0012_018B),
+        ),
+    ]);
+    let pipe_name = unique_pipe_name("data-only");
+    let mut server = NamedPipeServerBuilder::new()
+        .pipe_name(pipe_name.clone())
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .pipe_type(NamedPipeType::Byte)
+        .first_instance(true)
+        .security(
+            PipeSecurityOptions::new()
+                .security_descriptor(SecurityDescriptor::new().with_dacl(dacl)),
+        )
+        .build()?
+        .create()?;
+
+    let client_cfg = NamedPipeClientBuilder::new()
+        .pipe_name(pipe_name)
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .connect_timeout(Duration::from_secs(3))
+        .build()?;
+    let client = thread::spawn(move || -> windows_erg::Result<Vec<u8>> {
+        let mut client = client_cfg.connect()?;
+        client
+            .write_all(b"hi")
+            .map_err(|e| io_to_error("client write", e))?;
+        let mut reply = [0u8; 2];
+        client
+            .read_exact(&mut reply)
+            .map_err(|e| io_to_error("client read", e))?;
+        Ok(reply.to_vec())
+    });
+
+    // Bounded: a refused client must fail the test, not hang it.
+    if let Err(e) = server.connect_with_timeout(Duration::from_secs(5)) {
+        let client_error = client.join().expect("client thread should not panic").err();
+        panic!("no client connected ({e}); client error: {client_error:?}");
+    }
+    let mut request = [0u8; 2];
+    server
+        .read_exact(&mut request)
+        .map_err(|e| io_to_error("server read", e))?;
+    server
+        .write_all(b"ok")
+        .map_err(|e| io_to_error("server write", e))?;
+    server.flush().map_err(|e| io_to_error("server flush", e))?;
+
+    assert_eq!(&request, b"hi");
+    assert_eq!(
+        client.join().expect("client thread should not panic")?,
+        b"ok"
+    );
+    Ok(())
+}

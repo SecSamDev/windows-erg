@@ -2,7 +2,6 @@ use std::io;
 use std::time::Duration;
 
 use windows::Win32::Foundation::GetLastError;
-use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, FlushFileBuffers, OPEN_EXISTING,
     ReadFile, WriteFile,
@@ -216,10 +215,21 @@ impl io::Write for NamedPipeClient {
     }
 }
 
+/// Read access for a pipe client: `FILE_GENERIC_READ`.
+const PIPE_CLIENT_READ: u32 = 0x0012_0089;
+/// Write access for a pipe client: `READ_CONTROL | SYNCHRONIZE |
+/// FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES`.
+///
+/// Deliberately narrower than `GENERIC_WRITE`, which also maps to
+/// `FILE_APPEND_DATA` (= `FILE_CREATE_PIPE_INSTANCE`). Servers that grant
+/// clients only data access, as recommended for service pipes, would
+/// otherwise reject the connection.
+const PIPE_CLIENT_WRITE: u32 = 0x0012_0102;
+
 fn to_client_access(open_mode: NamedPipeOpenMode) -> u32 {
     match open_mode {
-        NamedPipeOpenMode::Inbound => GENERIC_READ.0,
-        NamedPipeOpenMode::Outbound => GENERIC_WRITE.0,
-        NamedPipeOpenMode::Duplex => GENERIC_READ.0 | GENERIC_WRITE.0,
+        NamedPipeOpenMode::Inbound => PIPE_CLIENT_READ,
+        NamedPipeOpenMode::Outbound => PIPE_CLIENT_WRITE,
+        NamedPipeOpenMode::Duplex => PIPE_CLIENT_READ | PIPE_CLIENT_WRITE,
     }
 }

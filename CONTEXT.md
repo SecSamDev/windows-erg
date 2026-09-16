@@ -165,7 +165,7 @@ src/
 | proxy | ✅ stable | system proxy + WinHTTP URL-based resolution |
 | mitigation | ✅ stable | query + apply; set only applies to current process |
 | file | ✅ stable | raw NTFS file copy via retrieval pointers |
-| pipes | ✅ stable | named pipe server/client, anonymous pipes; server I/O is overlapped with optional timeout, `flush` drains the pipe, reads return `Ok(0)` when the peer closes |
+| pipes | ✅ stable | named pipe server/client, anonymous pipes; server I/O is overlapped with optional timeout, `flush` drains the pipe, reads return `Ok(0)` when the peer closes; `first_instance(true)` prevents name squatting; clients request data-only access (no `FILE_CREATE_PIPE_INSTANCE`), so servers can grant exactly that |
 | system | ✅ stable | snapshot of host metrics, known folders |
 | console | ✅ stable | `signal_on_ctrl` sets a `Wait` on Ctrl+C/close/shutdown |
 | wait | ✅ stable | manual reset events, wait_any, wait_all |

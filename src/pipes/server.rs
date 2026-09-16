@@ -8,8 +8,9 @@ use windows::Win32::Foundation::{
     WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows::Win32::Storage::FileSystem::{
-    FILE_FLAG_OVERLAPPED, FILE_FLAGS_AND_ATTRIBUTES, FlushFileBuffers, PIPE_ACCESS_DUPLEX,
-    PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, ReadFile, WriteFile,
+    FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, FILE_FLAGS_AND_ATTRIBUTES,
+    FlushFileBuffers, PIPE_ACCESS_DUPLEX, PIPE_ACCESS_INBOUND, PIPE_ACCESS_OUTBOUND, ReadFile,
+    WriteFile,
 };
 use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows::Win32::System::Pipes::{
@@ -47,6 +48,7 @@ pub struct NamedPipeServerBuilder {
     default_timeout: Duration,
     security: PipeSecurityOptions,
     allowed_executables: Vec<PathBuf>,
+    first_instance: bool,
 }
 
 impl NamedPipeServerBuilder {
@@ -62,6 +64,7 @@ impl NamedPipeServerBuilder {
             default_timeout: Duration::from_secs(5),
             security: PipeSecurityOptions::default(),
             allowed_executables: Vec::new(),
+            first_instance: false,
         }
     }
 
@@ -113,6 +116,17 @@ impl NamedPipeServerBuilder {
         self
     }
 
+    /// Fail creation if a pipe with this name already exists
+    /// (`FILE_FLAG_FIRST_PIPE_INSTANCE`).
+    ///
+    /// Use this for well-known service pipes: it stops another process from
+    /// squatting on the name before the service starts, since the service then
+    /// refuses to share the pipe instead of silently joining it.
+    pub fn first_instance(mut self, first_instance: bool) -> Self {
+        self.first_instance = first_instance;
+        self
+    }
+
     /// Restrict connections to processes whose executable path matches one of the given paths.
     ///
     /// The comparison is case-insensitive. If no paths are added (the default), all processes
@@ -161,6 +175,7 @@ impl NamedPipeServerBuilder {
             default_timeout: self.default_timeout,
             security: self.security,
             allowed_executables: self.allowed_executables,
+            first_instance: self.first_instance,
         })
     }
 }
@@ -183,6 +198,7 @@ pub struct NamedPipeServerConfig {
     default_timeout: Duration,
     security: PipeSecurityOptions,
     allowed_executables: Vec<PathBuf>,
+    first_instance: bool,
 }
 
 impl NamedPipeServerConfig {
@@ -194,7 +210,10 @@ impl NamedPipeServerConfig {
     /// Create a named pipe server instance.
     pub fn create(&self) -> Result<NamedPipeServer> {
         let name_wide = to_utf16_nul(self.pipe_name.as_str());
-        let open_mode = to_server_open_mode(self.open_mode);
+        let mut open_mode = to_server_open_mode(self.open_mode);
+        if self.first_instance {
+            open_mode |= FILE_FLAG_FIRST_PIPE_INSTANCE;
+        }
         let pipe_mode = to_pipe_mode(self.pipe_type);
         let max_instances = if self.max_instances == u8::MAX {
             PIPE_UNLIMITED_INSTANCES
