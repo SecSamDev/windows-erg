@@ -145,8 +145,9 @@ src/
   mitigation/       ← process mitigations (mod)
   desktop/          ← window enumeration + tray icons (windows, tray, types)
   service/          ← SCM wrappers (manager, service, status, types)
+  console/          ← console control signals (Ctrl+C → Wait)
   system/           ← system snapshot (mod, types)
-  utils/            ← internal helpers (handles, strings)
+  utils/            ← internal helpers (handles, strings, io error conversion)
   wait/             ← wait handle primitives (mod)
 ```
 
@@ -164,8 +165,9 @@ src/
 | proxy | ✅ stable | system proxy + WinHTTP URL-based resolution |
 | mitigation | ✅ stable | query + apply; set only applies to current process |
 | file | ✅ stable | raw NTFS file copy via retrieval pointers |
-| pipes | ✅ stable | named pipe server/client, anonymous pipes |
-| system | ✅ stable | snapshot of host metrics |
+| pipes | ✅ stable | named pipe server/client, anonymous pipes; server I/O is overlapped with optional timeout, `flush` drains the pipe, reads return `Ok(0)` when the peer closes |
+| system | ✅ stable | snapshot of host metrics, known folders |
+| console | ✅ stable | `signal_on_ctrl` sets a `Wait` on Ctrl+C/close/shutdown |
 | wait | ✅ stable | manual reset events, wait_any, wait_all |
 
 Treat `src/registry/` and `src/process/` as style and pattern anchors for all new work.
@@ -207,6 +209,9 @@ unsafe { SomeWindowsApi(...) }
 - wrap unsafe blocks tightly around the single call
 - attach operation context to every error
 - preserve OS error code as `Option<i32>` when available
+- for `std::io` impls, convert with `utils::win_to_io_error` (never
+  `io::Error::from_raw_os_error(e.code().0)`: that passes an HRESULT and loses
+  the `io::ErrorKind`)
 
 ### Allocation Discipline
 

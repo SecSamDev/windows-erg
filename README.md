@@ -53,7 +53,8 @@ windows-erg = "0.1"
 - mitigation: process mitigation query/apply helpers
 - file: raw file operations
 - service: Windows Service Control Manager query/control/enumeration
-- system: system snapshot and power control operations
+- system: system snapshot, known folders and power control operations
+- console: Ctrl+C / console close signalling through `Wait`
 - security, pipes: security and IPC primitives
 
 ## Quick Examples
