@@ -43,7 +43,7 @@ use crate::registry::{self, Hive};
 use crate::utils::{OwnedHandle, pwstr_to_string, to_utf16_nul};
 
 pub use types::{
-    BiosInfo, GuidInfo, HostIdentity, HostSnapshot, LogicalDiskInfo, MachineGuid,
+    BiosInfo, GuidInfo, HostIdentity, HostSnapshot, KnownFolder, LogicalDiskInfo, MachineGuid,
     NetworkInterfaceInfo, OsInfo, PhysicalDiskInfo, PowerAction, PowerActionOptions,
     SnapshotSection, SnapshotSectionError, UserInfo,
 };
@@ -141,6 +141,47 @@ pub fn snapshot() -> HostSnapshot {
         users,
         section_errors,
     }
+}
+
+/// Resolve a well-known shell folder for the current user.
+///
+/// Prefer this over hard-coded paths such as `C:\ProgramData`: the folders
+/// can be redirected and the system drive is not always `C:`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use windows_erg::system::{KnownFolder, known_folder};
+///
+/// let data = known_folder(KnownFolder::ProgramData)?;
+/// println!("{}", data.display());
+/// # Ok::<(), windows_erg::Error>(())
+/// ```
+pub fn known_folder(folder: KnownFolder) -> Result<std::path::PathBuf> {
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::{
+        FOLDERID_LocalAppData, FOLDERID_ProgramData, FOLDERID_ProgramFiles,
+        FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, SHGetKnownFolderPath,
+    };
+
+    let id = match folder {
+        KnownFolder::ProgramData => FOLDERID_ProgramData,
+        KnownFolder::ProgramFiles => FOLDERID_ProgramFiles,
+        KnownFolder::LocalAppData => FOLDERID_LocalAppData,
+        KnownFolder::RoamingAppData => FOLDERID_RoamingAppData,
+    };
+    // SAFETY: `id` is a valid folder GUID; a null token selects the current user.
+    let raw = unsafe { SHGetKnownFolderPath(&id, KF_FLAG_DEFAULT, HANDLE::default()) }
+        .map_err(|e| Error::WindowsApi(WindowsApiError::with_context(e, "SHGetKnownFolderPath")))?;
+    let path = pwstr_to_string(raw);
+    // SAFETY: the shell allocated `raw` with the COM allocator and it is not used again.
+    unsafe { CoTaskMemFree(Some(raw.0 as *const _)) };
+
+    path.map(std::path::PathBuf::from).ok_or_else(|| {
+        Error::Other(crate::error::OtherError::new(
+            "SHGetKnownFolderPath returned an empty path",
+        ))
+    })
 }
 
 /// Get hostname via native API with environment fallback.
@@ -1156,5 +1197,20 @@ mod tests {
         };
 
         assert_eq!(shutdown_reason(&options).0, 0x0004_0000);
+    }
+
+    #[test]
+    fn known_folders_resolve_to_existing_absolute_dirs() {
+        use super::{KnownFolder, known_folder};
+
+        for folder in [
+            KnownFolder::ProgramData,
+            KnownFolder::ProgramFiles,
+            KnownFolder::LocalAppData,
+        ] {
+            let path = known_folder(folder).expect("known folder resolves");
+            assert!(path.is_absolute(), "{folder:?}: {}", path.display());
+            assert!(path.is_dir(), "{folder:?}: {}", path.display());
+        }
     }
 }

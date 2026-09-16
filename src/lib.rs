@@ -42,12 +42,14 @@
 //! - [`evt`] - Windows Event Log querying and reading
 //! - [`etw`] - Event Tracing for Windows (ETW)
 //! - [`file`] - Raw file operations
-//! - [`pipes`] - Windows named and anonymous pipe API (in progress)
+//! - [`pipes`] - Windows named and anonymous pipe API
+//! - [`console`] - Console control signal (Ctrl+C) handling
 //! - [`service`] - Windows Service Control Manager operations
 
 #![warn(missing_docs)]
 #![cfg(windows)]
 
+pub mod console;
 pub mod desktop;
 pub mod error;
 pub mod etw;

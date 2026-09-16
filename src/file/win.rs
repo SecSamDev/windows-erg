@@ -170,7 +170,7 @@ pub(crate) fn get_retrieval_pointers(
 
 pub(crate) fn move_disk_position(disk_handle: HANDLE, offset: i64) -> std::io::Result<()> {
     unsafe { SetFilePointerEx(disk_handle, offset, None, FILE_BEGIN) }
-        .map_err(|e| std::io::Error::from_raw_os_error(e.code().0))?;
+        .map_err(crate::utils::win_to_io_error)?;
     Ok(())
 }
 
@@ -189,7 +189,7 @@ pub(crate) fn read_file_from_disk_pointer(
     let mut read_bytes = 0u32;
 
     unsafe { ReadFile(disk_handle, Some(io_buffer), Some(&mut read_bytes), None) }
-        .map_err(|e: WinError| std::io::Error::from_raw_os_error(e.code().0))?;
+        .map_err(crate::utils::win_to_io_error)?;
 
     Ok(read_bytes)
 }

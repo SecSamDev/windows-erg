@@ -4,12 +4,14 @@ use std::time::Duration;
 use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, OPEN_EXISTING, ReadFile, WriteFile,
+    CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_MODE, FlushFileBuffers, OPEN_EXISTING,
+    ReadFile, WriteFile,
 };
 use windows::Win32::System::Pipes::WaitNamedPipeW;
 use windows::core::PCWSTR;
 
 use crate::error::InvalidParameterError;
+use crate::utils::io::{PipeReadError, classify_pipe_read_error, win_to_io_error};
 use crate::utils::to_utf16_nul;
 use crate::{Error, Result};
 
@@ -177,11 +179,18 @@ impl NamedPipeClient {
 }
 
 impl io::Read for NamedPipeClient {
+    /// Reads follow `std` pipe semantics: a closed server yields `Ok(0)`, and a
+    /// message larger than `buf` is returned across several reads.
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut read = 0u32;
-        unsafe { ReadFile(self.endpoint.raw_handle(), Some(buf), Some(&mut read), None) }
-            .map_err(|e| io::Error::from_raw_os_error(e.code().0))?;
-        Ok(read as usize)
+        // SAFETY: the handle is open and synchronous; `buf` outlives the call.
+        let result =
+            unsafe { ReadFile(self.endpoint.raw_handle(), Some(buf), Some(&mut read), None) };
+        match result.map_err(classify_pipe_read_error) {
+            Ok(()) | Err(PipeReadError::MoreData) => Ok(read as usize),
+            Err(PipeReadError::EndOfStream) => Ok(0),
+            Err(PipeReadError::Failed(e)) => Err(e),
+        }
     }
 }
 
@@ -196,12 +205,14 @@ impl io::Write for NamedPipeClient {
                 None,
             )
         }
-        .map_err(|e| io::Error::from_raw_os_error(e.code().0))?;
+        .map_err(win_to_io_error)?;
         Ok(written as usize)
     }
 
+    /// Block until the server has read everything written so far.
     fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        // SAFETY: the handle is owned by `self.endpoint` and open.
+        unsafe { FlushFileBuffers(self.endpoint.raw_handle()) }.map_err(win_to_io_error)
     }
 }
 

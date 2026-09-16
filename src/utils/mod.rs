@@ -5,10 +5,14 @@
 
 /// Shared Win32 handle ownership helpers.
 pub mod handles;
+/// Conversion from `windows` errors to `std::io` errors.
+pub mod io;
 /// Shared UTF-16 and wide-string conversion helpers.
 pub mod strings;
 
 /// Shared owned Win32 handle RAII wrapper.
 pub use handles::OwnedHandle;
+/// `windows::core::Error` to `std::io::Error` conversion.
+pub use io::{win_to_io_error, win32_code};
 /// Shared UTF-16 and PWSTR conversion helpers.
 pub use strings::{pwstr_to_string, pwstr_to_string_len, to_utf16, to_utf16_nul, to_utf16_nul_in};

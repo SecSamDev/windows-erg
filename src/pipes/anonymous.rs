@@ -5,6 +5,7 @@ use windows::Win32::Storage::FileSystem::{ReadFile, WriteFile};
 use windows::Win32::System::Pipes::CreatePipe;
 
 use crate::utils::OwnedHandle;
+use crate::utils::io::{PipeReadError, classify_pipe_read_error, win_to_io_error};
 use crate::{Error, Result};
 
 use super::security_attrs::NativePipeSecurityAttributes;
@@ -120,9 +121,14 @@ impl AnonymousPipeReader {
 impl io::Read for AnonymousPipeReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut read = 0u32;
-        unsafe { ReadFile(self.handle.raw(), Some(buf), Some(&mut read), None) }
-            .map_err(|e| io::Error::from_raw_os_error(e.code().0))?;
-        Ok(read as usize)
+        // SAFETY: the handle is owned by `self` and open; `buf` outlives the call.
+        let result = unsafe { ReadFile(self.handle.raw(), Some(buf), Some(&mut read), None) };
+        match result.map_err(classify_pipe_read_error) {
+            Ok(()) | Err(PipeReadError::MoreData) => Ok(read as usize),
+            // The write end was closed: end of stream, as in `std`.
+            Err(PipeReadError::EndOfStream) => Ok(0),
+            Err(PipeReadError::Failed(e)) => Err(e),
+        }
     }
 }
 
@@ -143,7 +149,7 @@ impl io::Write for AnonymousPipeWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let mut written = 0u32;
         unsafe { WriteFile(self.handle.raw(), Some(buf), Some(&mut written), None) }
-            .map_err(|e| io::Error::from_raw_os_error(e.code().0))?;
+            .map_err(win_to_io_error)?;
         Ok(written as usize)
     }
 

@@ -193,3 +193,16 @@ pub struct PowerActionOptions {
     /// Optional shutdown comment displayed to interactive users.
     pub comment: Option<String>,
 }
+
+/// Well-known shell folders resolved by [`known_folder`](super::known_folder).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KnownFolder {
+    /// Machine-wide application data (`C:\ProgramData`).
+    ProgramData,
+    /// Native program files directory (`C:\Program Files`).
+    ProgramFiles,
+    /// Per-user local application data (`%LOCALAPPDATA%`).
+    LocalAppData,
+    /// Per-user roaming application data (`%APPDATA%`).
+    RoamingAppData,
+}

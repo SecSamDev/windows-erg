@@ -475,3 +475,108 @@ fn server_connect_with_wait_object_interrupted() -> windows_erg::Result<()> {
 
     Ok(())
 }
+
+fn byte_pipe_pair(
+    prefix: &str,
+) -> windows_erg::Result<(
+    windows_erg::pipes::NamedPipeServer,
+    windows_erg::pipes::NamedPipeClient,
+)> {
+    let pipe_name = unique_pipe_name(prefix);
+    let server = NamedPipeServerBuilder::new()
+        .pipe_name(pipe_name.clone())
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .pipe_type(NamedPipeType::Byte)
+        .build()?
+        .create()?;
+    let client_cfg = NamedPipeClientBuilder::new()
+        .pipe_name(pipe_name)
+        .open_mode(NamedPipeOpenMode::Duplex)
+        .connect_timeout(Duration::from_secs(3))
+        .build()?;
+    let client = thread::spawn(move || client_cfg.connect());
+    server.connect()?;
+    let client = client.join().expect("client thread should not panic")?;
+    Ok((server, client))
+}
+
+#[test]
+fn server_reads_payload_larger_than_pipe_buffer() -> windows_erg::Result<()> {
+    let (mut server, mut client) = byte_pipe_pair("large-payload")?;
+    let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+    let expected = payload.clone();
+
+    let writer = thread::spawn(move || client.write_all(&payload));
+    let mut received = vec![0u8; expected.len()];
+    server
+        .read_exact(&mut received)
+        .map_err(|e| io_to_error("server read_exact", e))?;
+    writer
+        .join()
+        .expect("writer thread should not panic")
+        .map_err(|e| io_to_error("client write", e))?;
+
+    assert_eq!(received, expected);
+    Ok(())
+}
+
+#[test]
+fn flushed_reply_survives_disconnect() -> windows_erg::Result<()> {
+    let (mut server, mut client) = byte_pipe_pair("flush-disconnect")?;
+    let reader = thread::spawn(move || {
+        let mut reply = Vec::new();
+        client.read_to_end(&mut reply).map(|_| reply)
+    });
+
+    server
+        .write_all(&[7u8; 50_000])
+        .map_err(|e| io_to_error("server write", e))?;
+    server.flush().map_err(|e| io_to_error("server flush", e))?;
+    server.disconnect()?;
+
+    let reply = reader
+        .join()
+        .expect("reader thread should not panic")
+        .map_err(|e| io_to_error("client read_to_end", e))?;
+    assert_eq!(reply.len(), 50_000);
+    Ok(())
+}
+
+#[test]
+fn server_read_times_out_and_connection_stays_usable() -> windows_erg::Result<()> {
+    let (mut server, mut client) = byte_pipe_pair("read-timeout")?;
+    server.set_io_timeout(Some(Duration::from_millis(100)));
+
+    let mut buf = [0u8; 4];
+    let err = server
+        .read(&mut buf)
+        .expect_err("read without data should time out");
+    assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+
+    client
+        .write_all(b"late")
+        .map_err(|e| io_to_error("client write", e))?;
+    server
+        .read_exact(&mut buf)
+        .map_err(|e| io_to_error("server read after timeout", e))?;
+    assert_eq!(&buf, b"late");
+    Ok(())
+}
+
+#[test]
+fn read_after_peer_closes_returns_end_of_stream() -> windows_erg::Result<()> {
+    let (mut server, client) = byte_pipe_pair("peer-closed")?;
+    drop(client);
+
+    let mut buf = [0u8; 8];
+    let read = server
+        .read(&mut buf)
+        .map_err(|e| io_to_error("server read", e))?;
+    assert_eq!(read, 0);
+
+    let err = server
+        .write_all(b"x")
+        .expect_err("write to a closed pipe should fail");
+    assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    Ok(())
+}
