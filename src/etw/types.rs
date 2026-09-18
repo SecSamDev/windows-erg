@@ -19,10 +19,19 @@ use windows::core::GUID;
 /// name for kernel providers — so only one kernel session can be active at a time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemProvider {
-    /// Process and thread creation/termination events.
+    /// Process creation/termination events.
     ///
-    /// Emits an event whenever any process or thread starts or stops system-wide.
+    /// Emits an event whenever any process starts or stops system-wide. Does
+    /// not include thread events — see [`SystemProvider::Thread`], which is
+    /// roughly ten times higher volume.
     Process,
+
+    /// Thread creation/termination events.
+    ///
+    /// Emits an event whenever any thread starts or stops system-wide. Much
+    /// higher volume than [`SystemProvider::Process`]; enable separately only
+    /// when thread-level detail is actually needed.
+    Thread,
 
     /// Registry key and value operations.
     ///
@@ -54,7 +63,8 @@ impl SystemProvider {
     pub(crate) fn trace_flags(self) -> u32 {
         use windows::Win32::System::Diagnostics::Etw::*;
         match self {
-            SystemProvider::Process => (EVENT_TRACE_FLAG_PROCESS | EVENT_TRACE_FLAG_THREAD).0,
+            SystemProvider::Process => EVENT_TRACE_FLAG_PROCESS.0,
+            SystemProvider::Thread => EVENT_TRACE_FLAG_THREAD.0,
             SystemProvider::Registry => EVENT_TRACE_FLAG_REGISTRY.0,
             SystemProvider::Network => EVENT_TRACE_FLAG_NETWORK_TCPIP.0,
             SystemProvider::FileIo => (EVENT_TRACE_FLAG_FILE_IO | EVENT_TRACE_FLAG_FILE_IO_INIT).0,
@@ -255,7 +265,27 @@ fn filetime_to_systemtime(filetime: i64) -> SystemTime {
 
 #[cfg(test)]
 mod tests {
-    use super::{DecodedEvent, TraceEvent};
+    use super::{DecodedEvent, SystemProvider, TraceEvent};
+
+    #[test]
+    fn process_and_thread_trace_flags_are_disjoint() {
+        use windows::Win32::System::Diagnostics::Etw::{
+            EVENT_TRACE_FLAG_PROCESS, EVENT_TRACE_FLAG_THREAD,
+        };
+
+        assert_eq!(
+            SystemProvider::Process.trace_flags(),
+            EVENT_TRACE_FLAG_PROCESS.0
+        );
+        assert_eq!(
+            SystemProvider::Thread.trace_flags(),
+            EVENT_TRACE_FLAG_THREAD.0
+        );
+        assert_eq!(
+            SystemProvider::Process.trace_flags() & SystemProvider::Thread.trace_flags(),
+            0
+        );
+    }
     use crate::etw::{
         EventField, EventFieldValue, FileIoOperation, RegistryOperation, TcpOperation,
     };
