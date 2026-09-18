@@ -1,111 +1,20 @@
 //! Core Process type and basic operations.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
-use windows::Win32::Storage::FileSystem::QueryDosDeviceW;
 use windows::Win32::System::ProcessStatus::GetProcessImageFileNameW;
 use windows::Win32::System::Threading::{
     GetCurrentProcess, GetExitCodeProcess, OpenProcess, PROCESS_QUERY_INFORMATION,
     PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
 };
-use windows::core::PCWSTR;
 
 use super::types::{ProcessAccess, ProcessId};
 use crate::error::{Error, ProcessError, ProcessOpenError, Result};
-use crate::utils::to_utf16_nul;
+use crate::path::nt_path_to_dos_into;
 use crate::wait::Wait;
 
 // STILL_ACTIVE exit code constant
 const STILL_ACTIVE: u32 = 259;
-const DEVICE_PREFIX: &[u16] = &[92, 68, 101, 118, 105, 99, 101, 92];
-
-/// Cache for device path to drive letter mappings
-/// Maps \Device\HarddiskVolumeX to C:, D:, etc.
-static DEVICE_PATH_CACHE: OnceLock<HashMap<Vec<u16>, char>> = OnceLock::new();
-
-/// Initialize the device path cache by querying all drives (A-Z)
-fn init_device_path_cache() -> HashMap<Vec<u16>, char> {
-    let mut cache = HashMap::new();
-    let mut device_path_buffer = vec![0u16; 32768];
-
-    for drive_char in 'A'..='Z' {
-        let drive = format!("{}:", drive_char);
-        let drive_wide = to_utf16_nul(&drive);
-
-        // QueryDosDeviceW returns the device path for the drive
-
-        let len =
-            unsafe { QueryDosDeviceW(PCWSTR(drive_wide.as_ptr()), Some(&mut device_path_buffer)) };
-
-        if len > 0 {
-            let mut device_path_vec: Vec<u16> = device_path_buffer[..len as usize].to_vec();
-            // Trim trailing null terminators
-            while device_path_vec.last() == Some(&0) {
-                device_path_vec.pop();
-            }
-            cache.insert(device_path_vec, drive_char);
-        }
-    }
-
-    cache
-}
-
-/// Convert device path directly from u16 buffer, minimizing allocations
-/// Parses device path boundaries in u16 form before converting to String
-fn device_path_to_drive_path_u16(buffer_u16: &[u16]) -> String {
-    // Quick length check
-    if buffer_u16.is_empty() {
-        return String::new();
-    }
-
-    // Check if starts with \Device\ (in u16 form)
-    const BACKSLASH: u16 = b'\\' as u16;
-    if buffer_u16[0] != BACKSLASH || buffer_u16.len() < 8 {
-        // Not a device path - convert full buffer
-        let path_str = String::from_utf16_lossy(buffer_u16);
-        return path_str;
-    }
-
-    // Check for "\Device\" prefix
-    if buffer_u16.len() < DEVICE_PREFIX.len()
-        || !buffer_u16[..DEVICE_PREFIX.len()].eq(DEVICE_PREFIX)
-    {
-        let path_str = String::from_utf16_lossy(buffer_u16);
-        return path_str;
-    }
-
-    // Find the end of device root (next backslash after \Device\HarddiskVolumeX)
-    let mut device_root_end = DEVICE_PREFIX.len();
-    while device_root_end < buffer_u16.len() && buffer_u16[device_root_end] != BACKSLASH {
-        device_root_end += 1;
-    }
-
-    // Convert only the device root part to String for HashMap lookup
-    let cache = DEVICE_PATH_CACHE.get_or_init(init_device_path_cache);
-
-    if let Some(&drive_char) = cache.get(&buffer_u16[..device_root_end]) {
-        // Found mapping - build result efficiently
-        if device_root_end >= buffer_u16.len() {
-            // Device root is the entire path
-            return format!("{}:\\", drive_char);
-        }
-
-        // Has path after device root - convert rest of path
-        let mut rest_str = String::with_capacity(device_root_end + 3);
-        rest_str.push(drive_char);
-        rest_str.push_str(":\\");
-        let rest_slice = &buffer_u16[device_root_end + 1..];
-        for c in char::decode_utf16(rest_slice.iter().copied()).flatten() {
-            rest_str.push(c);
-        }
-        return rest_str;
-    }
-
-    // No mapping found - return full path converted to String
-    String::from_utf16_lossy(buffer_u16)
-}
 
 /// A handle to a Windows process.
 pub struct Process {
@@ -217,10 +126,16 @@ impl Process {
             )));
         }
 
-        // Convert device path directly from u16 buffer, avoiding intermediate full string conversion
-        let path = device_path_to_drive_path_u16(&buffer_u16[..len]);
+        let nt_path = String::from_utf16_lossy(&buffer_u16[..len]);
 
-        Ok(PathBuf::from(path))
+        let mut dos_path = String::with_capacity(nt_path.len() + 2);
+        if !nt_path_to_dos_into(&nt_path, &mut dos_path) {
+            // No device-root mapping found (e.g. a network path) — fall back
+            // to the raw NT path rather than failing the caller outright.
+            dos_path = nt_path;
+        }
+
+        Ok(PathBuf::from(dos_path))
     }
 
     /// Check if the process is still running.
@@ -427,187 +342,6 @@ mod tests {
         assert_eq!(current.id().as_u32(), std::process::id());
     }
 
-    // Device path conversion tests
-    #[test]
-    fn test_device_path_to_drive_path_passthrough_non_device_path() {
-        // Non-device paths should pass through unchanged
-        let path = "C:\\Windows\\System32\\file.exe";
-        let u16_path: Vec<u16> = path.encode_utf16().collect();
-        let result = device_path_to_drive_path_u16(&u16_path);
-        assert_eq!(result, path);
-    }
-
-    #[test]
-    fn test_device_path_to_drive_path_initializes_cache() {
-        // First call should initialize the cache
-        let path = r"\Device\HarddiskVolume1\Windows\System32\kernel32.dll";
-        let u16_path: Vec<u16> = path.encode_utf16().collect();
-        let result = device_path_to_drive_path_u16(&u16_path);
-
-        // Result should be non-empty (either converted or fallback to device path)
-        assert!(!result.is_empty(), "Should return a valid path");
-    }
-
-    #[test]
-    fn test_device_path_to_drive_path_consistent_mapping() {
-        // Same device path should always map to same result
-        let path1 = r"\Device\HarddiskVolume1\Windows\System32\kernel32.dll";
-        let path2 = r"\Device\HarddiskVolume1\Program Files\app.exe";
-
-        let u16_path1: Vec<u16> = path1.encode_utf16().collect();
-        let u16_path2: Vec<u16> = path2.encode_utf16().collect();
-
-        let result1 = device_path_to_drive_path_u16(&u16_path1);
-        let result2 = device_path_to_drive_path_u16(&u16_path2);
-
-        // Both should have consistent behavior (same conversion status)
-        let is_device_1 = result1.starts_with(r"\Device\");
-        let is_device_2 = result2.starts_with(r"\Device\");
-
-        assert_eq!(
-            is_device_1, is_device_2,
-            "Consistent mapping for same device"
-        );
-    }
-
-    #[test]
-    fn test_device_path_to_drive_path_root_path() {
-        // Device path without subdirectories should be processed
-        let path = r"\Device\HarddiskVolume1";
-        let u16_path: Vec<u16> = path.encode_utf16().collect();
-        let result = device_path_to_drive_path_u16(&u16_path);
-
-        assert!(!result.is_empty(), "Should return a valid path");
-    }
-
-    #[test]
-    fn test_device_path_to_drive_path_long_path() {
-        // Long device paths should be processed correctly
-        let path = r"\Device\HarddiskVolume1\Windows\System32\Drivers\etc\hosts";
-        let u16_path: Vec<u16> = path.encode_utf16().collect();
-        let result = device_path_to_drive_path_u16(&u16_path);
-
-        // Should handle the path properly (either convert or fallback)
-        assert!(
-            result.contains("hosts") || result.starts_with(r"\Device\"),
-            "Should process path correctly"
-        );
-    }
-
-    #[test]
-    fn test_device_path_to_drive_path_multiple_backslashes() {
-        // Paths with multiple directory levels
-        let path = r"\Device\HarddiskVolume2\Users\Admin\Documents\file.txt";
-        let u16_path: Vec<u16> = path.encode_utf16().collect();
-        let result = device_path_to_drive_path_u16(&u16_path);
-
-        // Should handle multipart path
-        assert!(!result.is_empty(), "Should return a valid path");
-    }
-
-    #[test]
-    fn test_device_path_to_drive_path_preserves_case() {
-        // Case information should be preserved
-        let path = r"\Device\HarddiskVolume1\Program Files\MyApp\config.ini";
-        let u16_path: Vec<u16> = path.encode_utf16().collect();
-        let result = device_path_to_drive_path_u16(&u16_path);
-
-        // Original path components should be present (case may vary)
-        assert!(
-            result.to_lowercase().contains("program files") || result.starts_with(r"\Device\"),
-            "Should handle case appropriately"
-        );
-    }
-
-    #[test]
-    fn test_init_device_path_cache_returns_valid_mappings() {
-        // Cache should contain valid mappings
-        let cache = init_device_path_cache();
-
-        // Should have at least one entry (the C: drive is almost always present)
-        assert!(!cache.is_empty(), "Cache should have entries");
-
-        // All values should be drive letters A-Z
-        for &drive_char in cache.values() {
-            assert!(
-                drive_char.is_ascii_uppercase(),
-                "Drive letter should be A-Z"
-            );
-        }
-    }
-
-    #[test]
-    fn test_init_device_path_cache_has_device_path_keys() {
-        // Cache keys should look like device paths
-        let cache = init_device_path_cache();
-
-        for key in cache.keys() {
-            assert!(
-                key.starts_with(DEVICE_PREFIX),
-                "Cache key should be a device path"
-            );
-        }
-    }
-
-    #[test]
-    fn test_device_path_cache_is_singleton() {
-        // Multiple accesses should return the same cache instance
-        let cache1 = DEVICE_PATH_CACHE.get_or_init(init_device_path_cache);
-        let cache2 = DEVICE_PATH_CACHE.get_or_init(init_device_path_cache);
-
-        // Should be the same object (pointer equality via reference)
-        assert_eq!(cache1.len(), cache2.len(), "Cache should be consistent");
-    }
-
-    #[test]
-    fn test_device_path_conversion_with_special_characters() {
-        // Paths with special characters should be processed
-        let path = r"\Device\HarddiskVolume1\Program Files (x86)\app.exe";
-        let u16_path: Vec<u16> = path.encode_utf16().collect();
-        let result = device_path_to_drive_path_u16(&u16_path);
-
-        assert!(!result.is_empty(), "Should handle special characters");
-    }
-
-    #[test]
-    fn test_device_path_unknown_device_fallback() {
-        // Unknown device paths should be handled gracefully
-        let path = r"\Device\HarddiskVolume999\unknown\path";
-        let u16_path: Vec<u16> = path.encode_utf16().collect();
-        let result = device_path_to_drive_path_u16(&u16_path);
-
-        // Should either be converted (if volume exists) or returned as-is
-        assert!(
-            result.contains("unknown") || result.starts_with(r"\Device\"),
-            "Should handle unknown device gracefully"
-        );
-    }
-
-    #[test]
-    fn test_device_path_empty_subdirectory() {
-        // Device path with trailing backslash
-        let path = r"\Device\HarddiskVolume1\";
-        let u16_path: Vec<u16> = path.encode_utf16().collect();
-        let result = device_path_to_drive_path_u16(&u16_path);
-
-        assert!(!result.is_empty(), "Should handle trailing backslash");
-    }
-
-    #[test]
-    fn test_device_path_c_drive_common_paths() {
-        // Common paths should process correctly
-        let paths = vec![
-            r"\Device\HarddiskVolume1\Windows\System32\kernel32.dll",
-            r"\Device\HarddiskVolume1\Program Files\app.exe",
-            r"\Device\HarddiskVolume1\Users\Admin\Desktop\file.txt",
-        ];
-
-        for path in paths {
-            let u16_path: Vec<u16> = path.encode_utf16().collect();
-            let result = device_path_to_drive_path_u16(&u16_path);
-
-            // Should return a non-empty path
-            assert!(!result.is_empty(), "Should process path without error");
-        }
-    }
+    // NT device path -> DOS path conversion now lives in `crate::path` and is
+    // tested there; `path_with_buffer` above is a thin wrapper around it.
 }

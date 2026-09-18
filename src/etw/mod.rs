@@ -13,6 +13,13 @@
 //! > User-mode providers may run without elevation depending on provider ACLs.
 //! > Kernel (`SystemProvider`) and user-mode GUID providers cannot be mixed in one session.
 //!
+//! > **Kernel session identity**: by default, kernel providers share the
+//! > single, reserved `NT Kernel Logger` session — starting one silently
+//! > stops any other tool (profiler, security product) that already owns it.
+//! > [`EventTraceBuilder::private_system_logger`] opts into a private,
+//! > independently-named system-logger session instead (Windows 8+ allows up
+//! > to 8 concurrently), so this session and unrelated tools no longer clash.
+//!
 //! # Quick Start
 //!
 //! Monitor process creation and termination:
@@ -44,7 +51,8 @@
 //!
 //! | Provider | What it captures | Typical use case |
 //! |----------|-----------------|------------------|
-//! | `Process` | Process/thread start and stop | Process monitoring, EDR |
+//! | `Process` | Process start and stop | Process monitoring, EDR |
+//! | `Thread` | Thread start and stop (~10x `Process` volume) | Thread-level scheduling detail |
 //! | `Registry` | Key/value read, write, delete | Auditing, config tracking |
 //! | `Network` | TCP/UDP connections | Network monitoring, firewall |
 //! | `FileIo` | File create, read, write, delete | File system auditing |
@@ -132,3 +140,7 @@ pub use decode::{
 };
 pub use session::{EventStreamMode, EventTrace, EventTraceBuilder};
 pub use types::{CpuSample, StackTrace, SystemProvider, ThreadContext, TraceEvent, TraceLevel};
+/// Re-exported so callers of [`EventTraceBuilder::user_provider`] and
+/// [`EventTraceBuilder::private_system_logger`] can name the GUID type
+/// without adding their own dependency on the `windows` crate.
+pub use windows::core::GUID;

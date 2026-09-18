@@ -41,6 +41,7 @@
 //! - [`registry`] - Registry operations
 //! - [`evt`] - Windows Event Log querying and reading
 //! - [`etw`] - Event Tracing for Windows (ETW)
+//! - [`path`] - NT device path to DOS drive path conversion
 //! - [`file`] - Raw file operations
 //! - [`pipes`] - Windows named and anonymous pipe API
 //! - [`console`] - Console control signal (Ctrl+C) handling
@@ -58,6 +59,7 @@ pub mod etw;
 pub mod evt;
 pub mod file;
 pub mod mitigation;
+pub mod path;
 pub mod pipes;
 pub mod process;
 pub mod proxy;

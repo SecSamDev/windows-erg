@@ -10,7 +10,8 @@ use crate::utils::to_utf16_nul;
 use crate::wait::Wait;
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -32,6 +33,8 @@ struct CallbackContext {
     include_thread_context: bool,
     include_stack_traces: bool,
     include_cpu_samples: bool,
+    /// Events dropped because a bounded output channel was full.
+    dropped: AtomicU64,
 }
 
 fn normalize_process_filter(pids: Vec<ProcessId>) -> Option<HashSet<ProcessId>> {
@@ -39,6 +42,44 @@ fn normalize_process_filter(pids: Vec<ProcessId>) -> Option<HashSet<ProcessId>> 
         return None;
     }
     Some(pids.into_iter().collect())
+}
+
+/// Kernel-session identity and mode, resolved once so `start()` and its
+/// stale-session retry path can't disagree with each other.
+struct KernelSessionConfig {
+    session_name: String,
+    log_file_mode: u32,
+    wnode_guid: GUID,
+}
+
+/// Resolve the session name, `LogFileMode`, and `Wnode.Guid` for a kernel
+/// session, or `None` when no kernel providers were requested (a user-mode
+/// session keeps the caller's own name unconditionally).
+///
+/// Pure and OS-call-free so it can be unit-tested directly.
+fn kernel_session_config(
+    builder_name: &str,
+    has_kernel_providers: bool,
+    private_logger_guid: Option<GUID>,
+) -> Option<KernelSessionConfig> {
+    if !has_kernel_providers {
+        return None;
+    }
+
+    let is_private_logger = private_logger_guid.is_some();
+    Some(KernelSessionConfig {
+        session_name: if is_private_logger {
+            builder_name.to_string()
+        } else {
+            KERNEL_LOGGER_NAME.to_string()
+        },
+        log_file_mode: if is_private_logger {
+            EVENT_TRACE_REAL_TIME_MODE | EVENT_TRACE_SYSTEM_LOGGER_MODE
+        } else {
+            EVENT_TRACE_REAL_TIME_MODE
+        },
+        wnode_guid: private_logger_guid.unwrap_or(GUID::zeroed()),
+    })
 }
 
 fn extract_stack_trace(record: &EVENT_RECORD) -> Option<StackTrace> {
@@ -122,6 +163,11 @@ impl CallbackContextGuard {
     fn as_user_context_ptr(&self) -> *mut std::ffi::c_void {
         self.boxed_ctx.as_ref() as *const Arc<CallbackContext> as *mut std::ffi::c_void
     }
+
+    /// Total events dropped so far because an output channel was full.
+    fn dropped_count(&self) -> u64 {
+        self.boxed_ctx.dropped.load(Ordering::Relaxed)
+    }
 }
 
 /// Output stream strategy for ETW events.
@@ -183,7 +229,9 @@ unsafe extern "system" fn trace_callback_fn(event_record: *mut EVENT_RECORD) {
             fields.as_deref(),
         );
         // Drop decoded events when channel is full (bounded backpressure).
-        let _ = sender.try_send(decoded);
+        if sender.try_send(decoded).is_err() {
+            ctx.dropped.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     if let Some(sender) = &ctx.raw_sender {
@@ -198,7 +246,9 @@ unsafe extern "system" fn trace_callback_fn(event_record: *mut EVENT_RECORD) {
             event.cpu_sample = Some(extract_cpu_sample(record));
         }
         // Drop raw events when channel is full (bounded backpressure).
-        let _ = sender.try_send(event);
+        if sender.try_send(event).is_err() {
+            ctx.dropped.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -237,7 +287,11 @@ pub struct EventTrace {
     stop_signal: Wait,
 
     /// Owns callback context memory for ETW callback user-data pointer.
-    _callback_ctx_guard: CallbackContextGuard,
+    callback_ctx_guard: CallbackContextGuard,
+
+    /// `true` if `start()` had to stop and replace a leftover session with the
+    /// same name before it could start (see [`Self::replaced_existing_session`]).
+    replaced_existing_session: bool,
 }
 
 impl EventTrace {
@@ -273,6 +327,7 @@ impl EventTrace {
             detailed_events: false,
             cpu_samples: false,
             process_filter: Vec::new(),
+            private_logger_guid: None,
         }
     }
 
@@ -292,6 +347,77 @@ impl EventTrace {
     /// Get a clone of the stop signal for external cancellation coordination.
     pub fn stop_handle(&self) -> Wait {
         self.stop_signal.clone()
+    }
+
+    /// `true` if starting this session had to stop and replace a leftover
+    /// session with the same name first.
+    ///
+    /// With a private system-logger name (see
+    /// [`private_system_logger`][EventTraceBuilder::private_system_logger]),
+    /// that leftover session can only be one this process (or a previous run
+    /// of it) created, never an unrelated tool's `NT Kernel Logger`.
+    pub fn replaced_existing_session(&self) -> bool {
+        self.replaced_existing_session
+    }
+
+    /// `true` while the `ProcessTrace` background thread is still running.
+    ///
+    /// Turns `false` if another tool stops this session out from under us
+    /// (e.g. by name collision or an administrator running `logman stop`).
+    /// Once `false`, the session is dead and a new one must be started.
+    pub fn is_running(&self) -> bool {
+        self.started
+            && self
+                .process_thread
+                .as_ref()
+                .is_some_and(|handle| !handle.is_finished())
+    }
+
+    /// Total events dropped so far because a bounded output channel was full.
+    ///
+    /// Distinct from [`events_lost`][Self::events_lost]: this counts events
+    /// this process's callback chose to discard; that counts events the
+    /// kernel itself lost before our callback ever ran.
+    pub fn events_dropped(&self) -> u64 {
+        self.callback_ctx_guard.dropped_count()
+    }
+
+    /// Query the kernel for events lost before delivery to our callback.
+    ///
+    /// Sums `EventsLost` (events dropped because all trace buffers were full)
+    /// and `RealTimeBuffersLost` (buffers dropped before the real-time
+    /// consumer could read them).
+    pub fn events_lost(&self) -> Result<u32> {
+        let name_wide = to_utf16_nul(&self.name);
+        let mut properties_buffer =
+            vec![0u8; std::mem::size_of::<EVENT_TRACE_PROPERTIES>() + (MAX_SESSION_NAME_LEN * 2)];
+
+        let result = unsafe {
+            let properties = &mut *(properties_buffer.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES);
+            properties.Wnode.BufferSize = properties_buffer.len() as u32;
+            properties.LoggerNameOffset = std::mem::size_of::<EVENT_TRACE_PROPERTIES>() as u32;
+
+            ControlTraceW(
+                self.session_handle,
+                PWSTR(name_wide.as_ptr() as *mut u16),
+                properties,
+                EVENT_TRACE_CONTROL_QUERY,
+            )
+        };
+
+        if result != ERROR_SUCCESS {
+            return Err(Error::Etw(EtwError::ConsumeFailed(
+                EtwConsumeError::with_code(
+                    Cow::Borrowed("Failed to query trace session loss statistics"),
+                    result.0 as i32,
+                ),
+            )));
+        }
+
+        let properties = unsafe { &*(properties_buffer.as_ptr() as *const EVENT_TRACE_PROPERTIES) };
+        Ok(properties
+            .EventsLost
+            .saturating_add(properties.RealTimeBuffersLost))
     }
 
     /// Fetch the next batch of events into the output buffer.
@@ -357,6 +483,40 @@ impl EventTrace {
                 self.events_processed += 1;
             }
         }
+        Ok(out_events.len())
+    }
+
+    /// Fetch the next batch of raw events, blocking up to `timeout` for the
+    /// first one, then draining whatever else has already arrived.
+    ///
+    /// Clears `out_events` before filling it. Returns the number of events
+    /// added, `0` if `timeout` elapsed with nothing to deliver.
+    ///
+    /// Prefer this over [`next_batch`][Self::next_batch] for a consumer loop:
+    /// `next_batch` never blocks, so a caller must poll it in a tight loop to
+    /// get low latency. This blocks efficiently and still drains a full batch
+    /// once something arrives.
+    pub fn next_batch_timeout(
+        &mut self,
+        out_events: &mut Vec<TraceEvent>,
+        timeout: Duration,
+    ) -> Result<usize> {
+        let rx = self.event_rx.as_ref().ok_or_else(|| {
+            Error::Etw(EtwError::ConsumeFailed(EtwConsumeError::new(
+                Cow::Borrowed("Raw event stream is disabled for this session"),
+            )))
+        })?;
+
+        out_events.clear();
+        match rx.recv_timeout(timeout) {
+            Ok(event) => out_events.push(event),
+            Err(RecvTimeoutError::Timeout) => return Ok(0),
+            Err(RecvTimeoutError::Disconnected) => return Ok(0),
+        }
+        while let Ok(event) = rx.try_recv() {
+            out_events.push(event);
+        }
+        self.events_processed += out_events.len();
         Ok(out_events.len())
     }
 
@@ -472,6 +632,7 @@ pub struct EventTraceBuilder {
     detailed_events: bool,
     cpu_samples: bool,
     process_filter: Vec<ProcessId>,
+    private_logger_guid: Option<GUID>,
 }
 
 impl EventTraceBuilder {
@@ -493,6 +654,23 @@ impl EventTraceBuilder {
     /// ```
     pub fn system_provider(mut self, provider: SystemProvider) -> Self {
         self.system_providers.push(provider);
+        self
+    }
+
+    /// Run kernel providers as a private system-logger session instead of the
+    /// shared `NT Kernel Logger`.
+    ///
+    /// Windows 8+ allows up to 8 concurrent system-logger sessions, each
+    /// identified by its own `Wnode.Guid` and `EVENT_TRACE_SYSTEM_LOGGER_MODE`
+    /// flag, and each keeping the caller's own session name instead of the
+    /// reserved `NT Kernel Logger`. Without this, starting a kernel session
+    /// silently stops (or clashes with) whatever other profiler or security
+    /// tool already owns the one legacy session — `guid` must be a value this
+    /// caller controls, never [`windows::Win32::System::Diagnostics::Etw::SystemTraceControlGuid`].
+    ///
+    /// Has no effect on user-mode ([`user_provider`][Self::user_provider]) sessions.
+    pub fn private_system_logger(mut self, guid: GUID) -> Self {
+        self.private_logger_guid = Some(guid);
         self
     }
 
@@ -692,13 +870,23 @@ impl EventTraceBuilder {
         // ----- Build EVENT_TRACE_PROPERTIES -----
 
         let is_kernel_session = !self.system_providers.is_empty();
+        let kernel_config =
+            kernel_session_config(&self.name, is_kernel_session, self.private_logger_guid);
 
-        // Kernel providers require the reserved "NT Kernel Logger" name.
-        let session_name = if is_kernel_session {
-            KERNEL_LOGGER_NAME.to_string()
-        } else {
-            self.name.clone()
-        };
+        // Kernel providers require the reserved "NT Kernel Logger" name,
+        // unless running as a private system logger (its own name and GUID).
+        let session_name = kernel_config
+            .as_ref()
+            .map(|c| c.session_name.clone())
+            .unwrap_or_else(|| self.name.clone());
+        let log_file_mode = kernel_config
+            .as_ref()
+            .map(|c| c.log_file_mode)
+            .unwrap_or(EVENT_TRACE_REAL_TIME_MODE);
+        let wnode_guid = kernel_config
+            .as_ref()
+            .map(|c| c.wnode_guid)
+            .unwrap_or(GUID::zeroed());
         let name_wide: Vec<u16> = session_name
             .encode_utf16()
             .chain(std::iter::once(0))
@@ -723,18 +911,19 @@ impl EventTraceBuilder {
         properties.Wnode.BufferSize = properties_buffer.len() as u32;
         properties.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
         properties.Wnode.ClientContext = 1; // QPC clock resolution
-        properties.Wnode.Guid = GUID::zeroed();
+        properties.Wnode.Guid = wnode_guid;
         properties.BufferSize = self.buffer_size;
         properties.MinimumBuffers = self.min_buffers;
         properties.MaximumBuffers = self.max_buffers;
         properties.FlushTimer = self.flush_interval;
-        properties.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+        properties.LogFileMode = log_file_mode;
         properties.EnableFlags = EVENT_TRACE_FLAG(enable_flags);
         properties.LoggerNameOffset = std::mem::size_of::<EVENT_TRACE_PROPERTIES>() as u32;
 
         // ----- StartTraceW -----
 
         let mut session_handle = CONTROLTRACE_HANDLE::default();
+        let mut replaced_existing_session = false;
 
         let start_result = unsafe {
             StartTraceW(
@@ -768,12 +957,12 @@ impl EventTraceBuilder {
                 props.Wnode.BufferSize = retry_buf.len() as u32;
                 props.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
                 props.Wnode.ClientContext = 1;
-                props.Wnode.Guid = GUID::zeroed();
+                props.Wnode.Guid = wnode_guid;
                 props.BufferSize = self.buffer_size;
                 props.MinimumBuffers = self.min_buffers;
                 props.MaximumBuffers = self.max_buffers;
                 props.FlushTimer = self.flush_interval;
-                props.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+                props.LogFileMode = log_file_mode;
                 props.EnableFlags = EVENT_TRACE_FLAG(enable_flags);
                 props.LoggerNameOffset = std::mem::size_of::<EVENT_TRACE_PROPERTIES>() as u32;
                 StartTraceW(
@@ -792,6 +981,8 @@ impl EventTraceBuilder {
                     ),
                 )));
             }
+
+            replaced_existing_session = true;
         } else if start_result != ERROR_SUCCESS {
             return Err(Error::Etw(EtwError::SessionStartFailed(
                 EtwSessionError::with_code(
@@ -880,6 +1071,7 @@ impl EventTraceBuilder {
             include_thread_context: self.thread_context,
             include_stack_traces: self.stack_traces,
             include_cpu_samples: self.cpu_samples,
+            dropped: AtomicU64::new(0),
         });
         let ctx_ptr = callback_ctx_guard.as_user_context_ptr();
 
@@ -938,7 +1130,8 @@ impl EventTraceBuilder {
             started: true,
             process_thread: Some(process_thread),
             stop_signal: Wait::manual_reset(false)?,
-            _callback_ctx_guard: callback_ctx_guard,
+            callback_ctx_guard,
+            replaced_existing_session,
         })
     }
 }
@@ -975,7 +1168,7 @@ mod tests {
             started: false,
             process_thread: None,
             stop_signal: Wait::manual_reset(false).expect("wait handle create"),
-            _callback_ctx_guard: CallbackContextGuard::new(CallbackContext {
+            callback_ctx_guard: CallbackContextGuard::new(CallbackContext {
                 raw_sender: None,
                 decoded_sender: None,
                 schema_cache: None,
@@ -983,7 +1176,9 @@ mod tests {
                 include_thread_context: false,
                 include_stack_traces: false,
                 include_cpu_samples: false,
+                dropped: AtomicU64::new(0),
             }),
+            replaced_existing_session: false,
         }
     }
 
@@ -1201,5 +1396,88 @@ mod tests {
         assert_eq!(count, 2);
         assert_eq!(out.len(), 2);
         assert_eq!(trace.events_processed(), 2);
+    }
+
+    #[test]
+    fn test_next_batch_timeout_blocks_then_drains_batch() {
+        let (tx, rx) = mpsc::sync_channel(8);
+        tx.send(make_trace_event(1, 100)).expect("send event 1");
+        tx.send(make_trace_event(2, 200)).expect("send event 2");
+        drop(tx);
+
+        let mut trace = inert_trace(Some(rx), None);
+        let mut out = Vec::new();
+
+        let count = trace
+            .next_batch_timeout(&mut out, Duration::from_millis(50))
+            .expect("next_batch_timeout should succeed");
+        assert_eq!(count, 2);
+        assert_eq!(trace.events_processed(), 2);
+    }
+
+    #[test]
+    fn test_next_batch_timeout_returns_zero_on_timeout() {
+        let (_tx, rx) = mpsc::sync_channel::<TraceEvent>(8);
+        let mut trace = inert_trace(Some(rx), None);
+        let mut out = Vec::new();
+
+        let count = trace
+            .next_batch_timeout(&mut out, Duration::from_millis(20))
+            .expect("next_batch_timeout should succeed on timeout");
+        assert_eq!(count, 0);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_next_batch_timeout_returns_zero_when_disconnected() {
+        let (tx, rx) = mpsc::sync_channel::<TraceEvent>(8);
+        drop(tx);
+        let mut trace = inert_trace(Some(rx), None);
+        let mut out = Vec::new();
+
+        let count = trace
+            .next_batch_timeout(&mut out, Duration::from_millis(20))
+            .expect("next_batch_timeout should succeed when disconnected");
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_kernel_session_config_none_without_kernel_providers() {
+        assert!(kernel_session_config("MySession", false, None).is_none());
+        assert!(kernel_session_config("MySession", false, Some(GUID::from_u128(1))).is_none());
+    }
+
+    #[test]
+    fn test_kernel_session_config_defaults_to_shared_kernel_logger() {
+        let config = kernel_session_config("MySession", true, None)
+            .expect("kernel providers should produce a config");
+        assert_eq!(config.session_name, KERNEL_LOGGER_NAME);
+        assert_eq!(config.log_file_mode, EVENT_TRACE_REAL_TIME_MODE);
+        assert_eq!(config.wnode_guid, GUID::zeroed());
+    }
+
+    #[test]
+    fn test_kernel_session_config_private_logger_keeps_name_and_sets_mode_and_guid() {
+        let guid = GUID::from_u128(0x1234_5678_9abc_def0_1234_5678_9abc_def0);
+        let config = kernel_session_config("MyPrivateSession", true, Some(guid))
+            .expect("kernel providers should produce a config");
+
+        assert_eq!(config.session_name, "MyPrivateSession");
+        assert_ne!(config.session_name, KERNEL_LOGGER_NAME);
+        assert_eq!(
+            config.log_file_mode,
+            EVENT_TRACE_REAL_TIME_MODE | EVENT_TRACE_SYSTEM_LOGGER_MODE
+        );
+        assert_ne!(config.log_file_mode & EVENT_TRACE_SYSTEM_LOGGER_MODE, 0);
+        assert_eq!(config.wnode_guid, guid);
+        assert_ne!(config.wnode_guid, GUID::zeroed());
+    }
+
+    #[test]
+    fn test_inert_trace_reports_not_running_and_no_drops() {
+        let trace = inert_trace(None, None);
+        assert!(!trace.is_running());
+        assert!(!trace.replaced_existing_session());
+        assert_eq!(trace.events_dropped(), 0);
     }
 }

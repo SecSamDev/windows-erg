@@ -138,6 +138,7 @@ src/
   process/          ← pattern anchor (processes, modules, threads, metrics, spawn, tree)
   evt/              ← event log (query, render, types)
   etw/              ← ETW session (session, schema, types, decode/)
+  path/             ← NT device path <-> DOS path conversion (mod)
   file/             ← raw file ops (builder, raw, win, mod)
   proxy/            ← proxy resolution (mod, types)
   security/         ← ACL editing (descriptor, editor, acl, sid, rights, target, backends/)
@@ -159,7 +160,8 @@ src/
 | registry | ✅ stable | reference implementation; use as pattern anchor |
 | process | ✅ stable | buffer patterns, ImagePath caching, PEB access |
 | evt | ✅ stable | query, streaming, serde (feature-gated) |
-| etw | ✅ functional | stubbed: stack traces, thread context, CPU samples, process filter; image decoder v0–v2 missing |
+| etw | ✅ stable | stack traces, thread context, CPU samples, process filter all wired into the callback; image decoder handles v2–v4; `private_system_logger(guid)` runs kernel providers as an independently-named session (Windows 8+, up to 8 concurrent) instead of the shared `NT Kernel Logger`; `Process` and `Thread` are now separate `SystemProvider`s; `next_batch_timeout` blocks efficiently instead of polling; `events_dropped()`/`events_lost()`/`is_running()` report backpressure and session health |
+| path | ✅ stable | `nt_path_to_dos`/`nt_path_to_dos_into` convert `\Device\...`, `\??\...`, and `\SystemRoot\...` NT paths to DOS form; `refresh_device_map()` picks up drives mounted after the cache was built; `Process::path_with_buffer` is a thin wrapper over this |
 | security | ✅ stable | dry-run ACL editing, SID parsing; `PermissionTarget::set_protected_dacl_sddl` / `dacl_sddl` replace or read a file/dir DACL as SDDL (protected = no inheritance) |
 | service | ✅ stable | least-privilege default (SERVICE_QUERY_STATUS); use plain u32 flags |
 | desktop | ✅ stable | window enumeration, tray icon lifecycle |
@@ -176,10 +178,9 @@ Treat `src/registry/` and `src/process/` as style and pattern anchors for all ne
 
 ### Known Gaps (ETW)
 
-- `with_stack_traces()`, `with_thread_context()`, `with_cpu_samples()`, `with_process_filter()` — declared on builder, fields are set, but have no effect in `start()` (see TODO at session.rs line 437).
-- Image provider decoder supports only version 3. Versions 0–2 fall through silently.
 - Network, Registry, FileIO providers rely on TDH schema parsing only (no direct binary decoders). Silent fallback to `Unknown` if TDH fails.
-- ETW test coverage is minimal (3 builder validation tests, 1 schema test, 4 helper tests). No lifecycle or decode integration tests.
+- `run_until_stopped` discards the events it drains on each poll — it exists for lifecycle demos, not as a consumption API. Use `next_batch_timeout` in a caller-owned loop instead.
+- ETW test coverage: builder validation, schema parsing, decode round-trips, `kernel_session_config`, and channel-drain/backpressure tests all run unelevated. Full session lifecycle (`etw_integration.rs`) and the two-concurrent-private-logger-sessions test are `#[ignore]`d — they need Administrator and real kernel session access.
 - `TDH_INTYPE_IPV4`/`TDH_INTYPE_IPV6` not exported by windows-rs 0.58; use numeric values 19/20 in schema.rs.
 
 ### Known Caveats (service)
