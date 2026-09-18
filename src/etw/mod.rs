@@ -55,7 +55,8 @@
 //! | `Thread` | Thread start and stop (~10x `Process` volume) | Thread-level scheduling detail |
 //! | `Registry` | Key/value read, write, delete | Auditing, config tracking |
 //! | `Network` | TCP/UDP connections | Network monitoring, firewall |
-//! | `FileIo` | File create, read, write, delete | File system auditing |
+//! | `FileIo` | File create, read, write, delete (highest volume here) | File system auditing |
+//! | `FileIoInit` | File create/close/delete/rename, no read/write | Sensitive-file access checks |
 //! | `ImageLoad` | DLL/EXE load and unload | Code injection detection |
 //!
 //! # Multiple Providers
