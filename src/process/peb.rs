@@ -42,6 +42,13 @@ struct RTL_USER_PROCESS_PARAMETERS_PARTIAL {
     environment: *mut u16,           // 0x64 - Environment block pointer
 }
 
+/// Unpack a `UNICODE_STRING`'s `Length` field (in bytes) from the first
+/// machine word of its in-memory representation (`Length: u16,
+/// MaximumLength: u16, <4 bytes padding on x64>`).
+fn unicode_string_length_from_packed_word(word: usize) -> u16 {
+    (word & 0xFFFF) as u16
+}
+
 impl Process {
     /// Get the command line of the process.
     ///
@@ -55,6 +62,21 @@ impl Process {
     pub fn command_line_with_buffer(&self, out_buffer: &mut Vec<u8>) -> Result<String> {
         let params = self.read_process_parameters(out_buffer)?;
         Ok(params.command_line)
+    }
+
+    /// Get the current working directory of the process.
+    ///
+    /// This reads `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory.DosPath` from
+    /// the Process Environment Block (PEB).
+    pub fn cwd(&self) -> Result<String> {
+        let mut buffer = Vec::with_capacity(8192);
+        self.cwd_with_buffer(&mut buffer)
+    }
+
+    /// Get the current working directory using a reusable output buffer.
+    pub fn cwd_with_buffer(&self, out_buffer: &mut Vec<u8>) -> Result<String> {
+        let params = self.read_process_parameters(out_buffer)?;
+        Ok(params.current_directory)
     }
 
     /// Get the environment variables of the process.
@@ -242,23 +264,33 @@ impl Process {
 
         let params = unsafe { &*(buffer.as_ptr() as *const RTL_USER_PROCESS_PARAMETERS) };
 
-        // Read command line
-        let cmd_line = self.read_unicode_string(
-            params.CommandLine.Buffer.0 as usize,
-            params.CommandLine.Length as usize,
-            buffer,
-        )?;
+        // The public `windows` crate binding only exposes the MS-documented
+        // shape of RTL_USER_PROCESS_PARAMETERS (Reserved1/Reserved2 +
+        // ImagePathName + CommandLine); the real ntdll struct also has a
+        // CURDIR CurrentDirectory field, which the binding folds into its
+        // opaque `Reserved2: [*mut c_void; 10]` (offsets 0x10-0x60).
+        // CURDIR.DosPath (a UNICODE_STRING) sits at real offset 0x38, i.e.
+        // Reserved2[5..7]: word[5] packs {Length: u16, MaximumLength: u16,
+        // <padding>} the same way every UNICODE_STRING packs its first
+        // machine word, and word[6] is the DosPath buffer pointer.
+        // https://ntdoc.m417z.com/rtl_user_process_parameters
+        let cwd_addr = params.Reserved2[6] as usize;
+        let cwd_len = unicode_string_length_from_packed_word(params.Reserved2[5] as usize);
 
-        // Read image path
-        let image_path = self.read_unicode_string(
-            params.ImagePathName.Buffer.0 as usize,
-            params.ImagePathName.Length as usize,
-            buffer,
-        )?;
+        // Extract everything from `params` before any of these calls mutate
+        // `buffer` (and thus the memory `params` points into).
+        let cmd_line_addr = params.CommandLine.Buffer.0 as usize;
+        let cmd_line_len = params.CommandLine.Length as usize;
+        let image_path_addr = params.ImagePathName.Buffer.0 as usize;
+        let image_path_len = params.ImagePathName.Length as usize;
+
+        let cmd_line = self.read_unicode_string(cmd_line_addr, cmd_line_len, buffer)?;
+        let image_path = self.read_unicode_string(image_path_addr, image_path_len, buffer)?;
+        let current_directory = self.read_unicode_string(cwd_addr, cwd_len as usize, buffer)?;
 
         Ok(ProcessParameters {
             command_line: cmd_line,
-            current_directory: String::new(), // Not available in windows-rs bindings
+            current_directory,
             image_path: ImagePath::from_str(&image_path),
         })
     }
@@ -422,8 +454,10 @@ mod tests {
 
         // Convert to u16 slice for parsing
         let u16_data: Vec<u16> = env_block
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|chunk| u16::from_le_bytes(*chunk))
             .collect();
 
         // Manual parsing logic (same as in read_environment_block)
@@ -463,8 +497,10 @@ mod tests {
         let env_block = create_env_block(&[("URL", "https://example.com?foo=bar")]);
 
         let u16_data: Vec<u16> = env_block
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|chunk| u16::from_le_bytes(*chunk))
             .collect();
 
         let mut env_vars: HashMap<String, String> = HashMap::new();
@@ -510,8 +546,10 @@ mod tests {
 
         let env_block = create_env_block(&pairs);
         let u16_data: Vec<u16> = env_block
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|chunk| u16::from_le_bytes(*chunk))
             .collect();
 
         let mut env_vars = HashMap::new();
@@ -555,8 +593,10 @@ mod tests {
         let env_block = create_env_block(&[("TEST", "Hello🌍World")]);
 
         let u16_data: Vec<u16> = env_block
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|chunk| u16::from_le_bytes(*chunk))
             .collect();
 
         let mut env_vars: HashMap<String, String> = HashMap::new();
@@ -586,6 +626,21 @@ mod tests {
             env_vars.get("TEST").map(|s| s.as_str()),
             Some("Hello🌍World")
         );
+    }
+
+    #[test]
+    fn unicode_string_length_unpacks_the_low_16_bits() {
+        // Length=42, MaximumLength=44 (packed low-to-high), arbitrary garbage
+        // in the padding bits above them — must not leak into the result.
+        let packed: usize = 0xDEAD_0000_002C_002A;
+        assert_eq!(unicode_string_length_from_packed_word(packed), 42);
+    }
+
+    #[test]
+    fn unicode_string_length_ignores_maximum_length() {
+        // MaximumLength (next 16 bits) must never be mistaken for Length.
+        let packed: usize = 0x0000_0000_FFFF_0005;
+        assert_eq!(unicode_string_length_from_packed_word(packed), 5);
     }
 
     #[test]
@@ -705,6 +760,56 @@ mod tests {
             image_str.contains(".exe") || !image_str.is_empty(),
             "Image path should look like an executable"
         );
+
+        // Current directory should be a real, absolute path.
+        assert!(
+            !params.current_directory.is_empty(),
+            "Parameters current_directory should not be empty"
+        );
+        assert!(
+            params.current_directory.contains(':'),
+            "current_directory should be an absolute Windows path: {}",
+            params.current_directory
+        );
+    }
+
+    #[test]
+    #[ignore] // May fail with pseudo-handle - run manually: cargo test -- --ignored
+    fn test_cwd_of_current_process() {
+        let current_process = Process::current();
+        let cwd = current_process.cwd().expect("Should read cwd");
+
+        assert!(!cwd.is_empty(), "cwd should not be empty");
+        assert!(
+            cwd.contains(':'),
+            "cwd should be an absolute Windows path: {cwd}"
+        );
+
+        // Matches std's own view of the working directory.
+        let expected = std::env::current_dir().expect("Should get current dir");
+        assert!(
+            cwd.eq_ignore_ascii_case(&expected.to_string_lossy()),
+            "cwd {cwd} should match std::env::current_dir() {}",
+            expected.display()
+        );
+    }
+
+    #[test]
+    #[ignore] // May fail with pseudo-handle - run manually: cargo test -- --ignored
+    fn test_cwd_with_buffer() {
+        let current_process = Process::current();
+        let mut buffer = Vec::with_capacity(8192);
+
+        let cwd = current_process
+            .cwd_with_buffer(&mut buffer)
+            .expect("Should read cwd with buffer");
+        assert!(!cwd.is_empty(), "cwd should not be empty");
+
+        // Reuse buffer for second call - should work correctly.
+        let cwd2 = current_process
+            .cwd_with_buffer(&mut buffer)
+            .expect("Should read cwd again");
+        assert_eq!(cwd, cwd2, "cwd should be consistent");
     }
 
     #[test]
@@ -815,7 +920,7 @@ mod tests {
             .expect("Should read environment variables");
 
         // All keys and values should be non-empty and valid strings
-        for (key, _value) in env.iter() {
+        for key in env.keys() {
             assert!(
                 !key.is_empty(),
                 "Environment variable key should not be empty"
