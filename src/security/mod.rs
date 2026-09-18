@@ -8,6 +8,7 @@ pub mod acl;
 mod backends;
 pub mod descriptor;
 pub mod editor;
+pub mod process_token;
 pub mod rights;
 pub mod sid;
 pub mod target;
@@ -18,6 +19,7 @@ pub use editor::{
     ApplyMode, DescriptorEditResult, PermissionDiff, PermissionEditPlan, PermissionEditPolicy,
     PermissionEditResult, PermissionEditor,
 };
+pub use process_token::{IntegrityLevel, ProcessToken};
 pub use rights::{FileAccess, RegistryAccess};
 pub use sid::Sid;
 pub use target::PermissionTarget;
