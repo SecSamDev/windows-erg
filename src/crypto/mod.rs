@@ -24,9 +24,9 @@ use windows::Win32::Foundation::{NTSTATUS, STATUS_INVALID_SIGNATURE};
 use windows::Win32::Security::Cryptography::{
     BCRYPT_ECCKEY_BLOB, BCRYPT_ECCPRIVATE_BLOB, BCRYPT_ECCPUBLIC_BLOB,
     BCRYPT_ECDSA_P256_ALG_HANDLE, BCRYPT_ECDSA_PRIVATE_P256_MAGIC, BCRYPT_ECDSA_PUBLIC_P256_MAGIC,
-    BCRYPT_FLAGS, BCRYPT_KEY_HANDLE, BCRYPT_SHA256_ALG_HANDLE, BCryptDestroyKey, BCryptExportKey,
-    BCryptFinalizeKeyPair, BCryptGenerateKeyPair, BCryptHash, BCryptImportKeyPair, BCryptSignHash,
-    BCryptVerifySignature,
+    BCRYPT_FLAGS, BCRYPT_KEY_HANDLE, BCRYPT_MD5_ALG_HANDLE, BCRYPT_SHA1_ALG_HANDLE,
+    BCRYPT_SHA256_ALG_HANDLE, BCryptDestroyKey, BCryptExportKey, BCryptFinalizeKeyPair,
+    BCryptGenerateKeyPair, BCryptHash, BCryptImportKeyPair, BCryptSignHash, BCryptVerifySignature,
 };
 use windows::core::PCWSTR;
 
@@ -34,6 +34,10 @@ use crate::error::{Error, InvalidParameterError, Result, WindowsApiError};
 
 /// Length of a SHA-256 digest.
 pub const SHA256_LEN: usize = 32;
+/// Length of a SHA-1 digest.
+pub const SHA1_LEN: usize = 20;
+/// Length of an MD5 digest.
+pub const MD5_LEN: usize = 16;
 /// Length of a P-256 public key: `X || Y`.
 pub const P256_PUBLIC_KEY_LEN: usize = 64;
 /// Length of a P-256 signature: `r || s`.
@@ -50,6 +54,26 @@ pub fn sha256(data: &[u8]) -> Result<[u8; SHA256_LEN]> {
     let mut digest = [0u8; SHA256_LEN];
     // SAFETY: the pseudo-handle needs no setup; both buffers are valid slices.
     let status = unsafe { BCryptHash(BCRYPT_SHA256_ALG_HANDLE, None, data, &mut digest) };
+    check(status, "BCryptHash")?;
+    Ok(digest)
+}
+
+/// SHA-1 of `data`. Not for anything security-sensitive — only for matching
+/// legacy hash databases that still key on it.
+pub fn sha1(data: &[u8]) -> Result<[u8; SHA1_LEN]> {
+    let mut digest = [0u8; SHA1_LEN];
+    // SAFETY: the pseudo-handle needs no setup; both buffers are valid slices.
+    let status = unsafe { BCryptHash(BCRYPT_SHA1_ALG_HANDLE, None, data, &mut digest) };
+    check(status, "BCryptHash")?;
+    Ok(digest)
+}
+
+/// MD5 of `data`. Not for anything security-sensitive — only for computing
+/// values like `imphash` that are conventionally MD5.
+pub fn md5(data: &[u8]) -> Result<[u8; MD5_LEN]> {
+    let mut digest = [0u8; MD5_LEN];
+    // SAFETY: the pseudo-handle needs no setup; both buffers are valid slices.
+    let status = unsafe { BCryptHash(BCRYPT_MD5_ALG_HANDLE, None, data, &mut digest) };
     check(status, "BCryptHash")?;
     Ok(digest)
 }
@@ -267,6 +291,27 @@ mod tests {
         assert_eq!(
             hex(&sha256(b"abc").unwrap()),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn sha1_matches_known_vectors() {
+        assert_eq!(
+            hex(&sha1(b"").unwrap()),
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
+        assert_eq!(
+            hex(&sha1(b"abc").unwrap()),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
+    }
+
+    #[test]
+    fn md5_matches_known_vectors() {
+        assert_eq!(hex(&md5(b"").unwrap()), "d41d8cd98f00b204e9800998ecf8427e");
+        assert_eq!(
+            hex(&md5(b"abc").unwrap()),
+            "900150983cd24fb0d6963f7d28e17f72"
         );
     }
 

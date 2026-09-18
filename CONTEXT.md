@@ -162,7 +162,7 @@ src/
 | evt | ✅ stable | query, streaming, serde (feature-gated) |
 | etw | ✅ stable | stack traces, thread context, CPU samples, process filter all wired into the callback; image decoder handles v2–v4; `private_system_logger(guid)` runs kernel providers as an independently-named session (Windows 8+, up to 8 concurrent) instead of the shared `NT Kernel Logger`; `Process` and `Thread` are separate `SystemProvider`s, and so are `FileIo` (create/read/write/delete/etc., highest volume) and `FileIoInit` (create/close/delete/rename only, no read/write); `next_batch_timeout` blocks efficiently instead of polling; `events_dropped()`/`events_lost()`/`is_running()` report backpressure and session health |
 | path | ✅ stable | `nt_path_to_dos`/`nt_path_to_dos_into` convert `\Device\...`, `\??\...`, and `\SystemRoot\...` NT paths to DOS form; `refresh_device_map()` picks up drives mounted after the cache was built; `Process::path_with_buffer` is a thin wrapper over this |
-| security | ✅ stable | dry-run ACL editing, SID parsing; `PermissionTarget::set_protected_dacl_sddl` / `dacl_sddl` replace or read a file/dir DACL as SDDL (protected = no inheritance) |
+| security | ✅ stable | dry-run ACL editing, SID parsing; `PermissionTarget::set_protected_dacl_sddl` / `dacl_sddl` replace or read a file/dir DACL as SDDL (protected = no inheritance); `ProcessToken::open(&Process)` + `is_elevated()`/`integrity_level()`/`is_admin()` — `is_admin()` duplicates the (query+duplicate) primary token into a `SecurityIdentification`-level impersonation token first, since `CheckTokenMembership` rejects a primary token with `ERROR_NO_IMPERSONATION_TOKEN` |
 | service | ✅ stable | least-privilege default (SERVICE_QUERY_STATUS); use plain u32 flags |
 | desktop | ✅ stable | window enumeration, tray icon lifecycle |
 | proxy | ✅ stable | system proxy + WinHTTP URL-based resolution |
@@ -170,7 +170,7 @@ src/
 | file | ✅ stable | raw NTFS file copy via retrieval pointers |
 | pipes | ✅ stable | named pipe server/client, anonymous pipes; server I/O is overlapped with optional timeout, `flush` drains the pipe, reads return `Ok(0)` when the peer closes; `client_is_elevated_admin()` impersonates the client (only after a read) and checks BUILTIN\Administrators is enabled, reverting on drop (aborts if revert fails); `first_instance(true)` prevents name squatting; clients request data-only access (no `FILE_CREATE_PIPE_INSTANCE`), so servers can grant exactly that |
 | system | ✅ stable | snapshot of host metrics, known folders |
-| crypto | ✅ stable | `sha256`, `EcdsaP256PublicKey::verify`, `EcdsaP256PrivateKey::{generate, sign, to_blob, from_blob}`; P1363 `r‖s` signatures; keys hold bytes only (CNG pseudo-handles, handle per call) |
+| crypto | ✅ stable | `sha256`/`sha1`/`md5` (sha1/md5 are for legacy hash-database and `imphash`-style matching only, not security); `EcdsaP256PublicKey::verify`, `EcdsaP256PrivateKey::{generate, sign, to_blob, from_blob}`; P1363 `r‖s` signatures; keys hold bytes only (CNG pseudo-handles, handle per call) |
 | console | ✅ stable | `signal_on_ctrl` sets a `Wait` on Ctrl+C/close/shutdown |
 | wait | ✅ stable | manual reset events, wait_any, wait_all |
 
