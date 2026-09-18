@@ -158,7 +158,7 @@ src/
 | Module | Status | Notes |
 |---|---|---|
 | registry | ✅ stable | reference implementation; use as pattern anchor |
-| process | ✅ stable | buffer patterns, ImagePath caching, PEB access |
+| process | ✅ stable | buffer patterns, ImagePath caching, PEB access; `Process::cwd()`/`cwd_with_buffer()` read `CURDIR.DosPath` (real ntdll offset 0x38, folded into the public `windows` crate's opaque `RTL_USER_PROCESS_PARAMETERS::Reserved2`); `ProcessAccess::QueryAndVmRead` is the access level PEB reads need on a remote process |
 | evt | ✅ stable | query, streaming, serde (feature-gated) |
 | etw | ✅ stable | stack traces, thread context, CPU samples, process filter all wired into the callback; image decoder handles v2–v4; `private_system_logger(guid)` runs kernel providers as an independently-named session (Windows 8+, up to 8 concurrent) instead of the shared `NT Kernel Logger`; `Process` and `Thread` are separate `SystemProvider`s, and so are `FileIo` (create/read/write/delete/etc., highest volume) and `FileIoInit` (create/close/delete/rename only, no read/write); `next_batch_timeout` blocks efficiently instead of polling; `events_dropped()`/`events_lost()`/`is_running()` report backpressure and session health |
 | path | ✅ stable | `nt_path_to_dos`/`nt_path_to_dos_into` convert `\Device\...`, `\??\...`, and `\SystemRoot\...` NT paths to DOS form; `refresh_device_map()` picks up drives mounted after the cache was built; `Process::path_with_buffer` is a thin wrapper over this |

@@ -316,6 +316,10 @@ pub enum ProcessAccess {
     QueryLimitedInformation,
     /// Read process memory.
     VmRead,
+    /// Query basic information and read process memory — the combination
+    /// needed to locate and read another process's PEB (command line, CWD,
+    /// environment).
+    QueryAndVmRead,
     /// Write process memory.
     VmWrite,
     /// Terminate the process.
@@ -340,6 +344,9 @@ impl ProcessAccess {
                 PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE
             }
             ProcessAccess::VmRead => PROCESS_VM_READ | PROCESS_SYNCHRONIZE,
+            ProcessAccess::QueryAndVmRead => {
+                PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_SYNCHRONIZE
+            }
             ProcessAccess::VmWrite => PROCESS_VM_WRITE | PROCESS_SYNCHRONIZE,
             ProcessAccess::Terminate => PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
             ProcessAccess::CreateThread => PROCESS_CREATE_THREAD | PROCESS_SYNCHRONIZE,
