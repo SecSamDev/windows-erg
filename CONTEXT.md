@@ -167,7 +167,7 @@ src/
 | desktop | ✅ stable | window enumeration, tray icon lifecycle |
 | proxy | ✅ stable | system proxy + WinHTTP URL-based resolution |
 | mitigation | ✅ stable | query + apply; set only applies to current process |
-| file | ✅ stable | raw NTFS file copy via retrieval pointers |
+| file | ✅ stable | raw NTFS file copy via retrieval pointers; `pe::analyze_pe_file`/`analyze_pe_bytes` — sha256/sha1/md5, imphash (order-of-appearance, matching community threat-intel tooling), imported DLL names, is_64bit/is_dotnet, overlay/checksum-mismatch signals. Deliberately skips Rich-header validation, packed-section entropy and mixed-mode detection (need real sample calibration) |
 | pipes | ✅ stable | named pipe server/client, anonymous pipes; server I/O is overlapped with optional timeout, `flush` drains the pipe, reads return `Ok(0)` when the peer closes; `client_is_elevated_admin()` impersonates the client (only after a read) and checks BUILTIN\Administrators is enabled, reverting on drop (aborts if revert fails); `first_instance(true)` prevents name squatting; clients request data-only access (no `FILE_CREATE_PIPE_INSTANCE`), so servers can grant exactly that |
 | system | ✅ stable | snapshot of host metrics, known folders |
 | crypto | ✅ stable | `sha256`/`sha1`/`md5` (sha1/md5 are for legacy hash-database and `imphash`-style matching only, not security); `EcdsaP256PublicKey::verify`, `EcdsaP256PrivateKey::{generate, sign, to_blob, from_blob}`; P1363 `r‖s` signatures; keys hold bytes only (CNG pseudo-handles, handle per call) |

@@ -39,10 +39,12 @@
 //! ```
 
 mod builder;
+pub mod pe;
 mod raw;
 mod win;
 
 pub use builder::RawFileBuilder;
+pub use pe::{PeAnalysis, analyze_pe_bytes, analyze_pe_file};
 pub use raw::RawFile;
 
 use std::path::Path;
