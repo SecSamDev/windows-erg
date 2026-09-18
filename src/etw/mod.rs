@@ -140,3 +140,7 @@ pub use decode::{
 };
 pub use session::{EventStreamMode, EventTrace, EventTraceBuilder};
 pub use types::{CpuSample, StackTrace, SystemProvider, ThreadContext, TraceEvent, TraceLevel};
+/// Re-exported so callers of [`EventTraceBuilder::user_provider`] and
+/// [`EventTraceBuilder::private_system_logger`] can name the GUID type
+/// without adding their own dependency on the `windows` crate.
+pub use windows::core::GUID;
