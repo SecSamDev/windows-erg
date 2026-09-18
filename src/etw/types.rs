@@ -45,11 +45,23 @@ pub enum SystemProvider {
     /// failures. Covers both IPv4 and IPv6.
     Network,
 
-    /// File I/O operations (create, read, write, delete).
+    /// File I/O operations: create, read, write, delete, and everything
+    /// else (`EVENT_TRACE_FLAG_FILE_IO | EVENT_TRACE_FLAG_FILE_IO_INIT`).
     ///
-    /// Emits an event for every file system operation. Very high volume —
-    /// consider using `next_batch_with_filter` to focus on relevant paths.
+    /// Emits an event for every file system operation, including every
+    /// read and write — by far the highest-volume provider here. Consider
+    /// [`SystemProvider::FileIoInit`] instead if only create/close/delete
+    /// events are needed, and `next_batch_with_filter` either way to focus
+    /// on relevant paths.
     FileIo,
+
+    /// File open/close/create/delete/rename events, without individual
+    /// reads and writes (`EVENT_TRACE_FLAG_FILE_IO_INIT` alone).
+    ///
+    /// A much lighter-weight alternative to [`SystemProvider::FileIo`] when
+    /// only "was this path touched" matters, not the read/write traffic on
+    /// an already-open handle.
+    FileIoInit,
 
     /// DLL and EXE image load/unload events.
     ///
@@ -68,6 +80,7 @@ impl SystemProvider {
             SystemProvider::Registry => EVENT_TRACE_FLAG_REGISTRY.0,
             SystemProvider::Network => EVENT_TRACE_FLAG_NETWORK_TCPIP.0,
             SystemProvider::FileIo => (EVENT_TRACE_FLAG_FILE_IO | EVENT_TRACE_FLAG_FILE_IO_INIT).0,
+            SystemProvider::FileIoInit => EVENT_TRACE_FLAG_FILE_IO_INIT.0,
             SystemProvider::ImageLoad => EVENT_TRACE_FLAG_IMAGE_LOAD.0,
         }
     }
@@ -285,6 +298,21 @@ mod tests {
             SystemProvider::Process.trace_flags() & SystemProvider::Thread.trace_flags(),
             0
         );
+    }
+
+    #[test]
+    fn file_io_init_is_a_strict_subset_of_file_io() {
+        use windows::Win32::System::Diagnostics::Etw::EVENT_TRACE_FLAG_FILE_IO_INIT;
+
+        let init = SystemProvider::FileIoInit.trace_flags();
+        let full = SystemProvider::FileIo.trace_flags();
+        assert_eq!(init, EVENT_TRACE_FLAG_FILE_IO_INIT.0);
+        assert_eq!(
+            init & full,
+            init,
+            "FileIoInit's bit must be set in FileIo too"
+        );
+        assert_ne!(init, full, "FileIo must carry more than just FileIoInit");
     }
     use crate::etw::{
         EventField, EventFieldValue, FileIoOperation, RegistryOperation, TcpOperation,
