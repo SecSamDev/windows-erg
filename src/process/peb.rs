@@ -94,12 +94,7 @@ impl Process {
         let peb_addr = self.read_peb_address(out_buffer)?;
 
         out_buffer.clear();
-        if out_buffer.capacity() < PEB_SIZE {
-            out_buffer.reserve(PEB_SIZE - out_buffer.capacity());
-        }
-        unsafe {
-            out_buffer.set_len(PEB_SIZE);
-        }
+        out_buffer.resize(PEB_SIZE, 0);
 
         let mut bytes_read = 0;
         unsafe {
@@ -124,12 +119,7 @@ impl Process {
 
         // Read RTL_USER_PROCESS_PARAMETERS
         out_buffer.clear();
-        if out_buffer.capacity() < RTL_USER_PROCESS_PARAMETERS_SIZE {
-            out_buffer.reserve(RTL_USER_PROCESS_PARAMETERS_SIZE - out_buffer.capacity());
-        }
-        unsafe {
-            out_buffer.set_len(RTL_USER_PROCESS_PARAMETERS_SIZE);
-        }
+        out_buffer.resize(RTL_USER_PROCESS_PARAMETERS_SIZE, 0);
 
         bytes_read = 0;
         unsafe {
@@ -171,12 +161,7 @@ impl Process {
     /// Internal: Read PEB address.
     fn read_peb_address(&self, buffer: &mut Vec<u8>) -> Result<usize> {
         buffer.clear();
-        if buffer.capacity() < PROCESS_BASIC_INFORMATION_SIZE {
-            buffer.reserve(PROCESS_BASIC_INFORMATION_SIZE - buffer.capacity());
-        }
-        unsafe {
-            buffer.set_len(PROCESS_BASIC_INFORMATION_SIZE);
-        }
+        buffer.resize(PROCESS_BASIC_INFORMATION_SIZE, 0);
 
         let mut return_length = 0u32;
         unsafe {
@@ -207,12 +192,7 @@ impl Process {
 
         // Read PEB
         buffer.clear();
-        if buffer.capacity() < PEB_SIZE {
-            buffer.reserve(PEB_SIZE - buffer.capacity());
-        }
-        unsafe {
-            buffer.set_len(PEB_SIZE);
-        }
+        buffer.resize(PEB_SIZE, 0);
 
         let mut bytes_read = 0;
         unsafe {
@@ -237,12 +217,7 @@ impl Process {
 
         // Read RTL_USER_PROCESS_PARAMETERS
         buffer.clear();
-        if buffer.capacity() < RTL_USER_PROCESS_PARAMETERS_SIZE {
-            buffer.reserve(RTL_USER_PROCESS_PARAMETERS_SIZE - buffer.capacity());
-        }
-        unsafe {
-            buffer.set_len(RTL_USER_PROCESS_PARAMETERS_SIZE);
-        }
+        buffer.resize(RTL_USER_PROCESS_PARAMETERS_SIZE, 0);
 
         bytes_read = 0;
         unsafe {
@@ -307,12 +282,7 @@ impl Process {
         }
 
         buffer.clear();
-        if buffer.capacity() < length {
-            buffer.reserve(length - buffer.capacity());
-        }
-        unsafe {
-            buffer.set_len(length);
-        }
+        buffer.resize(length, 0);
 
         let mut bytes_read = 0;
         unsafe {
