@@ -4,10 +4,10 @@
 use windows::Win32::Foundation::{BOOL, HANDLE};
 use windows::Win32::Security::GetTokenInformation;
 use windows::Win32::Security::{
-    CheckTokenMembership, CreateWellKnownSid, DuplicateToken, GetSidSubAuthority,
+    CheckTokenMembership, CreateWellKnownSid, DuplicateToken, GetLengthSid, GetSidSubAuthority,
     GetSidSubAuthorityCount, PSID, SECURITY_MAX_SID_SIZE, SecurityIdentification, TOKEN_DUPLICATE,
-    TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TokenElevation, TokenIntegrityLevel,
-    WinBuiltinAdministratorsSid,
+    TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL, TOKEN_QUERY, TOKEN_USER, TokenElevation,
+    TokenIntegrityLevel, TokenUser, WinBuiltinAdministratorsSid,
 };
 use windows::Win32::System::SystemServices::{
     SECURITY_MANDATORY_HIGH_RID, SECURITY_MANDATORY_LOW_RID, SECURITY_MANDATORY_MEDIUM_RID,
@@ -17,6 +17,7 @@ use windows::Win32::System::Threading::OpenProcessToken;
 
 use crate::error::{Error, InvalidParameterError, Result, WindowsApiError};
 use crate::process::Process;
+use crate::security::Sid;
 use crate::utils::OwnedHandle;
 
 fn context(api: &'static str) -> impl Fn(windows::core::Error) -> Error {
@@ -192,6 +193,45 @@ impl ProcessToken {
             .map_err(context("CheckTokenMembership"))?;
         Ok(member.as_bool())
     }
+
+    /// The token's owning user SID (`TokenUser`).
+    pub fn user_sid(&self) -> Result<Sid> {
+        // Same two-call pattern as `integrity_level`: size first, then read.
+        let mut return_length = 0u32;
+        unsafe {
+            let _ = GetTokenInformation(self.handle.raw(), TokenUser, None, 0, &mut return_length);
+        }
+        if return_length == 0 {
+            return Err(Error::InvalidParameter(InvalidParameterError::new(
+                "TokenUser",
+                "GetTokenInformation reported a zero-length TOKEN_USER",
+            )));
+        }
+
+        let mut buffer = vec![0u8; return_length as usize];
+        // SAFETY: `buffer` is exactly `return_length` bytes, as reported above.
+        unsafe {
+            GetTokenInformation(
+                self.handle.raw(),
+                TokenUser,
+                Some(buffer.as_mut_ptr() as *mut _),
+                return_length,
+                &mut return_length,
+            )
+        }
+        .map_err(context("GetTokenInformation(TokenUser)"))?;
+
+        // SAFETY: `buffer` was just filled with a `TOKEN_USER` by the call
+        // above, and `sid_ptr`/`sid_len` point within it or at a SID that
+        // GetTokenInformation allocated within `buffer`'s lifetime.
+        let sid_bytes = unsafe {
+            let token_user = &*(buffer.as_ptr() as *const TOKEN_USER);
+            let sid_ptr = token_user.User.Sid;
+            let sid_len = GetLengthSid(sid_ptr) as usize;
+            std::slice::from_raw_parts(sid_ptr.0 as *const u8, sid_len).to_vec()
+        };
+        Sid::from_bytes(&sid_bytes)
+    }
 }
 
 #[cfg(test)]
@@ -246,5 +286,21 @@ mod tests {
             .expect("should read integrity level");
         assert!(level >= IntegrityLevel::Low, "{level:?}");
         let _ = token.is_admin().expect("should check admin membership");
+    }
+
+    #[test]
+    #[ignore] // Run manually: cargo test -- --ignored
+    fn user_sid_matches_the_current_process_owner() {
+        use crate::security::Sid;
+
+        let process = Process::current();
+        let token = ProcessToken::open(&process).expect("should open current process token");
+        let sid = token.user_sid().expect("should read TokenUser");
+
+        // Parses back to the same string form and is never a well-known
+        // service SID for a normal interactive test run.
+        let reparsed = Sid::parse(sid.as_str()).expect("SID string should round-trip");
+        assert_eq!(sid, reparsed);
+        assert!(sid.as_str().starts_with("S-1-5-21") || sid.as_str().starts_with("S-1-12-1"));
     }
 }

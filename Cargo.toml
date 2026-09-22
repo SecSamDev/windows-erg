@@ -43,6 +43,8 @@ windows = { version = "0.58", features = [
     "Wdk_Foundation",
     "Wdk_Storage_FileSystem",
     "Wdk_System_Threading",
+    "Wdk_System_SystemInformation",
+    "Win32_System_WindowsProgramming",
     
     # Security
     "Win32_Security",
