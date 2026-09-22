@@ -96,6 +96,7 @@ mod metrics;
 mod modules;
 mod peb;
 mod processes;
+mod rundown;
 mod spawn;
 mod threads;
 mod tree;
@@ -103,6 +104,7 @@ mod types;
 
 // Re-export public types
 pub use processes::Process;
+pub use rundown::ProcessSnapshotEntry;
 pub use spawn::{ProcessSpawner, SpawnedProcess};
 pub use types::{
     HostMemoryMetrics, HostMetrics, MemoryInfo, ModuleInfo, ProcessAccess, ProcessCpuTimes,
