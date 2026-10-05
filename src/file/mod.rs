@@ -41,11 +41,13 @@
 mod builder;
 pub mod pe;
 mod raw;
+mod safe;
 mod win;
 
 pub use builder::RawFileBuilder;
 pub use pe::{PeAnalysis, analyze_pe_bytes, analyze_pe_file};
 pub use raw::RawFile;
+pub use safe::{create_new_no_follow, delete_no_follow};
 
 use std::path::Path;
 
