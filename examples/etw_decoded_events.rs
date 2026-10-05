@@ -130,6 +130,11 @@ fn main() -> windows_erg::Result<()> {
                     let op = match f.operation {
                         FileIoOperation::Name => "Name",
                         FileIoOperation::Create => "Create",
+                        FileIoOperation::NameCreate => "NameCreate",
+                        FileIoOperation::NameDelete => "NameDelete",
+                        FileIoOperation::DeletePath => "DeletePath",
+                        FileIoOperation::RenamePath => "RenamePath",
+                        FileIoOperation::SetLinkPath => "SetLinkPath",
                         FileIoOperation::Rundown => "Rundown",
                         FileIoOperation::Cleanup => "Cleanup",
                         FileIoOperation::Close => "Close",

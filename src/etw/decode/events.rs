@@ -140,10 +140,16 @@ pub struct RegistryEvent {
 /// Decoded operation kind for File I/O kernel provider events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileIoOperation {
-    /// File name event (type 0).
+    /// File name event (type 0): maps a `file_key` to `file_name`.
     Name,
-    /// File create/open event (types 32, 64).
+    /// File create/open operation (type 64). Carries `open_path`.
     Create,
+    /// Name event emitted when a file is created (type 32): `file_key` and
+    /// `file_name`, not an operation.
+    NameCreate,
+    /// Name event emitted when a file is deleted (type 35): `file_key` and
+    /// `file_name` of the deleted file, not an operation.
+    NameDelete,
     /// File rundown event (type 36).
     Rundown,
     /// Cleanup when the last handle is released (type 65).
@@ -168,10 +174,16 @@ pub enum FileIoOperation {
     Read,
     /// File write operation (type 68).
     Write,
-    /// File delete operation (types 35, 70).
+    /// File delete operation (type 70). Carries no path; see `DeletePath`.
     Delete,
-    /// File rename operation (type 71).
+    /// File rename operation (type 71). Carries no path; see `RenamePath`.
     Rename,
+    /// Delete with the file's path in `file_name` (type 79).
+    DeletePath,
+    /// Rename with the *new* name in `file_name` (type 80).
+    RenamePath,
+    /// Hard-link creation with the link's path in `file_name` (type 81).
+    SetLinkPath,
     /// Opcode did not match a known File I/O operation.
     Unknown,
 }
@@ -180,14 +192,31 @@ pub enum FileIoOperation {
 #[derive(Debug, Clone)]
 pub struct FileIoEvent {
     pub operation: FileIoOperation,
+    /// Only set when the schema has a `PID`/`ProcessId` field. Kernel File I/O
+    /// schemas carry `TTID` (a thread id) instead; use `thread_id` or the
+    /// event header's process id.
     pub process_id: Option<ProcessId>,
+    /// Issuing thread (`TTID`).
+    pub thread_id: Option<u32>,
     pub file_object: Option<u64>,
     pub irp_ptr: Option<u64>,
     pub file_key: Option<u64>,
+    /// Path on create events (`OpenPath`).
     pub open_path: Option<String>,
+    /// Path on name events and path operations (`FileName`): the deleted
+    /// file for `NameDelete`/`DeletePath`, the new name for `RenamePath`.
+    pub file_name: Option<String>,
     pub create_options: Option<u32>,
     pub file_attributes: Option<u32>,
     pub share_access: Option<u32>,
+    /// `FILE_INFORMATION_CLASS` on set/query/delete/rename/path events.
+    pub info_class: Option<u32>,
+    /// Class-specific extra data on the same events.
+    pub extra_info: Option<u64>,
+    /// Bytes transferred on read/write events (needs `SystemProvider::FileIo`).
+    pub io_size: Option<u32>,
+    /// File offset on read/write events.
+    pub offset: Option<u64>,
 }
 
 /// Typed representation of a decoded process start event.

@@ -45,22 +45,23 @@ pub enum SystemProvider {
     /// failures. Covers both IPv4 and IPv6.
     Network,
 
-    /// File I/O operations: create, read, write, delete, and everything
-    /// else (`EVENT_TRACE_FLAG_FILE_IO | EVENT_TRACE_FLAG_FILE_IO_INIT`).
+    /// File I/O operations with their completions
+    /// (`EVENT_TRACE_FLAG_FILE_IO | EVENT_TRACE_FLAG_FILE_IO_INIT`).
     ///
-    /// Emits an event for every file system operation, including every
-    /// read and write — by far the highest-volume provider here. Consider
-    /// [`SystemProvider::FileIoInit`] instead if only create/close/delete
-    /// events are needed, and `next_batch_with_filter` either way to focus
-    /// on relevant paths.
+    /// Everything [`SystemProvider::FileIoInit`] emits, plus an
+    /// `OperationEnd` (opcode 76) per operation carrying its `NtStatus`.
+    /// Use this only when the outcome of each operation matters; it roughly
+    /// doubles the event volume.
     FileIo,
 
-    /// File open/close/create/delete/rename events, without individual
-    /// reads and writes (`EVENT_TRACE_FLAG_FILE_IO_INIT` alone).
+    /// File I/O operation-initiation events (`EVENT_TRACE_FLAG_FILE_IO_INIT`
+    /// alone): create, cleanup, close, **read, write**, set/query
+    /// information, delete, rename, and the delete/rename path events
+    /// (79/80) — but no completion events, so no `NtStatus`.
     ///
-    /// A much lighter-weight alternative to [`SystemProvider::FileIo`] when
-    /// only "was this path touched" matters, not the read/write traffic on
-    /// an already-open handle.
+    /// Verified with `examples/etw_fileio_probe.rs` (2026-10-05): reads and
+    /// writes do arrive under this flag alone, with `IoSize` and `Offset`.
+    /// It is still high volume; filter early.
     FileIoInit,
 
     /// DLL and EXE image load/unload events.
@@ -526,9 +527,10 @@ mod tests {
     #[test]
     fn decode_typed_fileio_from_preparsed_fields() {
         let event = TraceEvent {
-            id: 32,
+            id: 64,
             version: 1,
-            opcode: 32,
+            // 64 is FileIo_Create; 32 is the create *name* event.
+            opcode: 64,
             level: 4,
             provider_guid: FileIoGuid,
             process_id: ProcessId::new(2222),
