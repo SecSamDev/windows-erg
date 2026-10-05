@@ -112,7 +112,9 @@ fn map_file(opcode: u8, fields: &[EventField]) -> FileIoEvent {
     FileIoEvent {
         operation: match opcode {
             0 => FileIoOperation::Name,
-            32 | 64 => FileIoOperation::Create,
+            32 => FileIoOperation::NameCreate,
+            35 => FileIoOperation::NameDelete,
+            64 => FileIoOperation::Create,
             36 => FileIoOperation::Rundown,
             65 => FileIoOperation::Cleanup,
             66 => FileIoOperation::Close,
@@ -125,18 +127,27 @@ fn map_file(opcode: u8, fields: &[EventField]) -> FileIoEvent {
             77 => FileIoOperation::DirectoryNotification,
             67 => FileIoOperation::Read,
             68 => FileIoOperation::Write,
-            35 | 70 => FileIoOperation::Delete,
+            70 => FileIoOperation::Delete,
             71 => FileIoOperation::Rename,
+            79 => FileIoOperation::DeletePath,
+            80 => FileIoOperation::RenamePath,
+            81 => FileIoOperation::SetLinkPath,
             _ => FileIoOperation::Unknown,
         },
         process_id: field_process_id(fields, &["PID", "ProcessId"]),
+        thread_id: field_u32(fields, &["TTID", "ThreadId"]),
         file_object: field_u64(fields, &["FileObject"]),
         irp_ptr: field_u64(fields, &["IrpPtr"]),
         file_key: field_u64(fields, &["FileKey"]),
         open_path: field_string(fields, &["OpenPath", "file.path"]),
+        file_name: field_string(fields, &["FileName"]),
         create_options: field_u32(fields, &["CreateOptions"]),
         file_attributes: field_u32(fields, &["FileAttributes"]),
         share_access: field_u32(fields, &["ShareAccess"]),
+        info_class: field_u32(fields, &["InfoClass"]),
+        extra_info: field_u64(fields, &["ExtraInfo"]),
+        io_size: field_u32(fields, &["IoSize"]),
+        offset: field_u64(fields, &["Offset"]),
     }
 }
 
@@ -374,6 +385,53 @@ mod tests {
         assert_eq!(event.process_id, Some(ProcessId::new(300)));
         assert_eq!(event.file_object, Some(0x1111));
         assert_eq!(event.irp_ptr, Some(0x2222));
+    }
+
+    #[test]
+    fn map_file_name_events_are_not_operations() {
+        let fields = vec![u64f("FileKey", 0x33), s("FileName", "\\Device\\X\\a.txt")];
+        let created = map_file(32, &fields);
+        assert_eq!(created.operation, FileIoOperation::NameCreate);
+        assert_eq!(created.file_name.as_deref(), Some("\\Device\\X\\a.txt"));
+        let deleted = map_file(35, &fields);
+        assert_eq!(deleted.operation, FileIoOperation::NameDelete);
+        assert_eq!(deleted.file_key, Some(0x33));
+        assert_eq!(map_file(0, &fields).operation, FileIoOperation::Name);
+    }
+
+    #[test]
+    fn map_file_path_operations_carry_file_name_and_info_class() {
+        let fields = vec![
+            u32f("TTID", 4242),
+            u64f("FileObject", 0x10),
+            u64f("FileKey", 0x20),
+            u64f("ExtraInfo", 0x30),
+            u32f("InfoClass", 10),
+            s("FileName", "\\Device\\X\\a.locked"),
+        ];
+        for (opcode, op) in [
+            (79, FileIoOperation::DeletePath),
+            (80, FileIoOperation::RenamePath),
+            (81, FileIoOperation::SetLinkPath),
+        ] {
+            let event = map_file(opcode, &fields);
+            assert_eq!(event.operation, op);
+            assert_eq!(event.thread_id, Some(4242));
+            assert_eq!(event.process_id, None);
+            assert_eq!(event.file_object, Some(0x10));
+            assert_eq!(event.info_class, Some(10));
+            assert_eq!(event.extra_info, Some(0x30));
+            assert_eq!(event.file_name.as_deref(), Some("\\Device\\X\\a.locked"));
+        }
+    }
+
+    #[test]
+    fn map_file_read_write_carry_size_and_offset() {
+        let fields = vec![u32f("IoSize", 4096), u64f("Offset", 8192)];
+        let event = map_file(68, &fields);
+        assert_eq!(event.operation, FileIoOperation::Write);
+        assert_eq!(event.io_size, Some(4096));
+        assert_eq!(event.offset, Some(8192));
     }
 
     #[test]

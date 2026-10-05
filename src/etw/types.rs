@@ -526,9 +526,10 @@ mod tests {
     #[test]
     fn decode_typed_fileio_from_preparsed_fields() {
         let event = TraceEvent {
-            id: 32,
+            id: 64,
             version: 1,
-            opcode: 32,
+            // 64 is FileIo_Create; 32 is the create *name* event.
+            opcode: 64,
             level: 4,
             provider_guid: FileIoGuid,
             process_id: ProcessId::new(2222),
