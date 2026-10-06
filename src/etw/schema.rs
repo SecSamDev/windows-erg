@@ -670,9 +670,12 @@ fn parse_out_type_override(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFie
         return Some((EventFieldValue::String(format!("0x{v:08X}")), 4));
     }
 
+    // `win:Port` is in network byte order (big-endian), unlike every other
+    // integer here: classic TcpIp `sport`/`dport` decoded little-endian came
+    // out byte-swapped (443 as 47873; measured with `etw_tcpip_probe`).
     if out_type == TDH_OUTTYPE_PORT.0 {
         let bytes: [u8; 2] = data.get(0..2)?.try_into().ok()?;
-        return Some((EventFieldValue::U16(u16::from_le_bytes(bytes)), 2));
+        return Some((EventFieldValue::U16(u16::from_be_bytes(bytes)), 2));
     }
 
     if out_type == TDH_OUTTYPE_PID.0 || out_type == TDH_OUTTYPE_TID.0 {
@@ -1275,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_outtype_port_returns_u16() {
+    fn parse_outtype_port_is_network_byte_order() {
         let prop = PropertyMeta {
             name: "Port".to_string(),
             in_type: TDH_INTYPE_UINT16.0,
@@ -1287,7 +1290,7 @@ mod tests {
             map_name: None,
         };
 
-        let data = [0xBBu8, 0x01];
+        let data = [0x01u8, 0xBB];
         let (value, consumed) = parse_one_value(&prop, &data).expect("expected port parse");
 
         assert_eq!(consumed, 2);

@@ -30,11 +30,60 @@ struct CallbackContext {
     decoded_sender: Option<SyncSender<DecodedEvent>>,
     schema_cache: Option<Mutex<SchemaCache>>,
     process_filter: Option<HashSet<ProcessId>>,
+    /// Opcodes discarded before any parsing ([`EventTraceBuilder::drop_opcodes`]).
+    opcode_drops: Vec<OpcodeDrop>,
     include_thread_context: bool,
     include_stack_traces: bool,
     include_cpu_samples: bool,
     /// Events dropped because a bounded output channel was full.
     dropped: AtomicU64,
+}
+
+/// A classic kernel event class whose individual opcodes can be discarded
+/// with [`EventTraceBuilder::drop_opcodes`]. One [`SystemProvider`] flag can
+/// enable several classes (`Network` enables both `TcpIp` and `UdpIp`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KernelEventClass {
+    /// `TcpIp` events (`SystemProvider::Network`).
+    TcpIp,
+    /// `UdpIp` events (`SystemProvider::Network`).
+    UdpIp,
+    /// `FileIo` events (`SystemProvider::FileIo`/`FileIoInit`).
+    FileIo,
+    /// `Registry` events (`SystemProvider::Registry`).
+    Registry,
+}
+
+impl KernelEventClass {
+    fn guid(self) -> GUID {
+        match self {
+            Self::TcpIp => TcpIpGuid,
+            Self::UdpIp => UdpIpGuid,
+            Self::FileIo => FileIoGuid,
+            Self::Registry => RegistryGuid,
+        }
+    }
+}
+
+/// The opcodes to discard for one event class, as a 256-bit set.
+#[derive(Debug, Clone)]
+struct OpcodeDrop {
+    class: GUID,
+    opcodes: [u64; 4],
+}
+
+impl OpcodeDrop {
+    fn contains(&self, opcode: u8) -> bool {
+        self.opcodes[usize::from(opcode / 64)] >> (opcode % 64) & 1 == 1
+    }
+}
+
+/// Whether an event of `class` with `opcode` is to be discarded. A linear
+/// scan: a session lists at most a handful of classes.
+fn is_dropped(drops: &[OpcodeDrop], class: &GUID, opcode: u8) -> bool {
+    drops
+        .iter()
+        .any(|d| d.class == *class && d.contains(opcode))
 }
 
 fn normalize_process_filter(pids: Vec<ProcessId>) -> Option<HashSet<ProcessId>> {
@@ -205,6 +254,15 @@ unsafe extern "system" fn trace_callback_fn(event_record: *mut EVENT_RECORD) {
         return;
     }
 
+    // Before the TDH parse below, which is the expensive part per event.
+    if is_dropped(
+        &ctx.opcode_drops,
+        &record.EventHeader.ProviderId,
+        record.EventHeader.EventDescriptor.Opcode,
+    ) {
+        return;
+    }
+
     let fields = ctx
         .schema_cache
         .as_ref()
@@ -327,6 +385,7 @@ impl EventTrace {
             detailed_events: false,
             cpu_samples: false,
             process_filter: Vec::new(),
+            opcode_drops: Vec::new(),
             private_logger_guid: None,
         }
     }
@@ -632,6 +691,7 @@ pub struct EventTraceBuilder {
     detailed_events: bool,
     cpu_samples: bool,
     process_filter: Vec<ProcessId>,
+    opcode_drops: Vec<OpcodeDrop>,
     private_logger_guid: Option<GUID>,
 }
 
@@ -773,10 +833,57 @@ impl EventTraceBuilder {
         self
     }
 
+    /// Discard events of `class` with any of `opcodes` in the ETW callback,
+    /// before their fields are parsed or anything is queued.
+    ///
+    /// Some kernel classes are dominated by events a consumer never wants:
+    /// `SystemProvider::Network` emits a `TcpIp` Send/Receive/Copy per packet,
+    /// about 95% of its events, alongside the Connect/Accept that describe
+    /// connections. With [`with_detailed_events`][Self::with_detailed_events]
+    /// each of those would otherwise pay a TDH schema lookup and field parse
+    /// only to be thrown away. Calls for the same class accumulate.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use windows_erg::etw::{EventTrace, KernelEventClass, SystemProvider};
+    ///
+    /// // Keep TcpIp Connect/Accept/Disconnect; drop per-packet events
+    /// // (IPv4 opcodes 10, 11, 18 and their IPv6 counterparts 26, 27, 34).
+    /// let trace = EventTrace::builder("Connections")
+    ///     .system_provider(SystemProvider::Network)
+    ///     .drop_opcodes(KernelEventClass::TcpIp, [10, 11, 18, 26, 27, 34])
+    ///     .start()?;
+    /// # Ok::<(), windows_erg::Error>(())
+    /// ```
+    pub fn drop_opcodes<I>(mut self, class: KernelEventClass, opcodes: I) -> Self
+    where
+        I: IntoIterator<Item = u8>,
+    {
+        let guid = class.guid();
+        let index = match self.opcode_drops.iter().position(|d| d.class == guid) {
+            Some(index) => index,
+            None => {
+                self.opcode_drops.push(OpcodeDrop {
+                    class: guid,
+                    opcodes: [0; 4],
+                });
+                self.opcode_drops.len() - 1
+            }
+        };
+        let set = &mut self.opcode_drops[index].opcodes;
+        for opcode in opcodes {
+            set[usize::from(opcode / 64)] |= 1 << (opcode % 64);
+        }
+        self
+    }
+
     /// Restrict event collection to specific process IDs.
     ///
-    /// When non-empty, only events whose `ProcessId` matches one of `pids`
-    /// are forwarded from the ETW callback to the output channels.
+    /// When non-empty, only events whose header `ProcessId` matches one of
+    /// `pids` are forwarded from the ETW callback to the output channels.
+    /// Classic `TcpIp` events carry `0xFFFFFFFF` there (the owning process is
+    /// only in the payload's `PID`), so this filter drops all of them.
     ///
     /// # Example
     ///
@@ -1068,6 +1175,7 @@ impl EventTraceBuilder {
             decoded_sender: decoded_tx,
             schema_cache,
             process_filter: normalize_process_filter(self.process_filter),
+            opcode_drops: self.opcode_drops,
             include_thread_context: self.thread_context,
             include_stack_traces: self.stack_traces,
             include_cpu_samples: self.cpu_samples,
@@ -1173,6 +1281,7 @@ mod tests {
                 decoded_sender: None,
                 schema_cache: None,
                 process_filter: None,
+                opcode_drops: Vec::new(),
                 include_thread_context: false,
                 include_stack_traces: false,
                 include_cpu_samples: false,
@@ -1267,6 +1376,33 @@ mod tests {
         assert_eq!(filter.len(), 2);
         assert!(filter.contains(&ProcessId::new(100)));
         assert!(filter.contains(&ProcessId::new(200)));
+    }
+
+    #[test]
+    fn test_drop_opcodes_matches_class_and_opcode_only() {
+        let builder = EventTrace::builder("Drops")
+            .drop_opcodes(KernelEventClass::TcpIp, [10, 11])
+            .drop_opcodes(KernelEventClass::TcpIp, [255])
+            .drop_opcodes(KernelEventClass::UdpIp, [0, 64]);
+        let drops = &builder.opcode_drops;
+        assert_eq!(drops.len(), 2, "calls for one class accumulate");
+
+        for opcode in [10, 11, 255] {
+            assert!(is_dropped(drops, &TcpIpGuid, opcode), "{opcode}");
+        }
+        for opcode in [12, 15, 0, 64] {
+            assert!(!is_dropped(drops, &TcpIpGuid, opcode), "{opcode}");
+        }
+        assert!(is_dropped(drops, &UdpIpGuid, 0));
+        assert!(is_dropped(drops, &UdpIpGuid, 64));
+        assert!(!is_dropped(drops, &UdpIpGuid, 10), "classes are separate");
+        assert!(!is_dropped(drops, &FileIoGuid, 10));
+    }
+
+    #[test]
+    fn test_no_drops_by_default() {
+        let builder = EventTrace::builder("NoDrops");
+        assert!(!is_dropped(&builder.opcode_drops, &TcpIpGuid, 10));
     }
 
     #[test]

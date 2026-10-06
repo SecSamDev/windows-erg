@@ -139,7 +139,7 @@ pub use decode::{
     ImageUnloadEvent, ProcessEndEvent, ProcessStartEvent, RegistryEvent, RegistryOperation,
     TcpEvent, TcpOperation,
 };
-pub use session::{EventStreamMode, EventTrace, EventTraceBuilder};
+pub use session::{EventStreamMode, EventTrace, EventTraceBuilder, KernelEventClass};
 pub use types::{CpuSample, StackTrace, SystemProvider, ThreadContext, TraceEvent, TraceLevel};
 /// Re-exported so callers of [`EventTraceBuilder::user_provider`] and
 /// [`EventTraceBuilder::private_system_logger`] can name the GUID type

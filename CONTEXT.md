@@ -182,6 +182,10 @@ Treat `src/registry/` and `src/process/` as style and pattern anchors for all ne
 - `run_until_stopped` discards the events it drains on each poll — it exists for lifecycle demos, not as a consumption API. Use `next_batch_timeout` in a caller-owned loop instead.
 - ETW test coverage: builder validation, schema parsing, decode round-trips, `kernel_session_config`, and channel-drain/backpressure tests all run unelevated. Full session lifecycle (`etw_integration.rs`) and the two-concurrent-private-logger-sessions test are `#[ignore]`d — they need Administrator and real kernel session access.
 - `TDH_INTYPE_IPV4`/`TDH_INTYPE_IPV6` not exported by windows-rs 0.58; use numeric values 19/20 in schema.rs.
+- `TDH_OUTTYPE_PORT` is network byte order: schema.rs decodes it big-endian (measured with `examples/etw_tcpip_probe.rs`, 2026-10-06; little-endian gave 443 as 47873).
+- Classic `TcpIp` events carry header PID `0xFFFFFFFF`; the owner is the payload `PID` (`TcpEvent.process_id`), so `with_process_filter` drops them all. `saddr`/`sport` is the event's own process's end for Connect and Accept alike, and loopback connections are delivered.
+- `UdpIp` is not decoded (arrives as `DecodedEvent::Generic`).
+- `EventTraceBuilder::drop_opcodes(KernelEventClass, opcodes)` discards events in the callback before the TDH parse. Send/Receive/Copy are ~95% of `TcpIp` volume.
 
 ### Known Caveats (service)
 
