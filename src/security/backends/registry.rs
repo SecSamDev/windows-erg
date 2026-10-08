@@ -210,6 +210,59 @@ pub(crate) fn write_descriptor(path: &str, descriptor: &SecurityDescriptor) -> R
     Ok(())
 }
 
+/// Replace the key's DACL with the one in `sddl` and mark it protected, so
+/// nothing is inherited from the parent key. Owner and group are unchanged.
+pub(crate) fn set_protected_dacl(path: &str, sddl: &str) -> Result<()> {
+    use windows::Win32::Security::PROTECTED_DACL_SECURITY_INFORMATION;
+
+    let (_descriptor, dacl) = super::dacl_from_sddl(path, "set_protected_dacl", sddl)?;
+    let (hive, subkey) = parse_registry_path(path)?;
+    let key = open_registry_key(hive, &subkey, READ_CONTROL_RIGHT | WRITE_DAC_RIGHT)?;
+    // SAFETY: `key` is an open handle with WRITE_DAC; `dacl` points into
+    // `_descriptor`, which outlives the call.
+    let result = unsafe {
+        SetSecurityInfo(
+            hkey_as_handle(key.handle),
+            SE_REGISTRY_KEY,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            PSID::default(),
+            PSID::default(),
+            Some(dacl as *const ACL),
+            None,
+        )
+    };
+    if result.0 != 0 {
+        return map_registry_security_status(path, "SetSecurityInfo", result.0 as i32);
+    }
+    Ok(())
+}
+
+/// The key's DACL as SDDL (`D:` part only), including the `P` flag when the
+/// DACL is protected.
+pub(crate) fn dacl_sddl(path: &str) -> Result<String> {
+    let (hive, subkey) = parse_registry_path(path)?;
+    let key = open_registry_key(hive, &subkey, READ_CONTROL_RIGHT)?;
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: `key` is an open handle with READ_CONTROL; the descriptor is
+    // freed by `LocalDescriptor`.
+    let result = unsafe {
+        GetSecurityInfo(
+            hkey_as_handle(key.handle),
+            SE_REGISTRY_KEY,
+            DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            None,
+            None,
+            Some(&mut descriptor),
+        )
+    };
+    if result.0 != 0 {
+        return map_registry_security_status(path, "GetSecurityInfo", result.0 as i32);
+    }
+    super::dacl_to_sddl_string(&super::LocalDescriptor(descriptor))
+}
+
 fn parse_registry_path(path: &str) -> Result<(HKEY, String)> {
     if path.trim().is_empty() {
         return Err(Error::InvalidParameter(InvalidParameterError::new(
