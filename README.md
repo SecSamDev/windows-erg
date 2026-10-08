@@ -48,7 +48,8 @@ windows-erg = "0.1"
 - desktop: desktop window enumeration, tray icon lifecycle, tray balloon notifications
 - registry: key/value operations with ergonomic typed access
 - evt: Windows Event Log query and rendering
-- etw: ETW session and event consumption support
+- etw: ETW session and event consumption support, and writing events as a manifest-based provider
+- crypto: CNG hashes, HMAC-SHA256, AES-256-GCM, ECDSA P-256, system RNG, and DPAPI (`crypto::dpapi`)
 - proxy: system and URL-specific proxy resolution
 - mitigation: process mitigation query/apply helpers
 - file: raw file operations
