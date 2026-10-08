@@ -29,11 +29,33 @@ fn protected_directory_dacl_is_applied_and_read_back() -> windows_erg::Result<()
     assert!(sddl.contains("(A;OICI;FA;;;SY)"), "{sddl}");
     assert!(sddl.contains(";;;BA)"), "{sddl}");
     assert!(!sddl.contains(";;;BU)"), "{sddl}");
-    assert!(
-        PermissionTarget::registry(r"HKCU\Software")
-            .dacl_sddl()
-            .is_err()
+    Ok(())
+}
+
+#[test]
+fn protected_registry_key_dacl_is_applied_and_read_back() -> windows_erg::Result<()> {
+    let subkey = format!(
+        r"Software\windows-erg-protected-dacl-{}",
+        std::process::id()
     );
+    RegistryKey::create(Hive::CurrentUser, &subkey)?;
+    let target = PermissionTarget::registry(format!(r"HKCU\{subkey}"));
+
+    // SYSTEM full control, Administrators read; nothing inherited. The
+    // owner may always read and rewrite the DACL, even without an ACE.
+    let applied = target.set_protected_dacl_sddl("D:(A;CI;KA;;;SY)(A;CI;KR;;;BA)");
+    let sddl = target.dacl_sddl();
+    let restored = target.set_protected_dacl_sddl("D:(A;CI;KA;;;WD)");
+    let removed = RegistryKey::delete_tree(Hive::CurrentUser, &subkey);
+
+    applied?;
+    restored?;
+    removed?;
+    let sddl = sddl?;
+    assert!(sddl.starts_with("D:P"), "{sddl}");
+    assert!(sddl.contains("(A;CI;KA;;;SY)"), "{sddl}");
+    assert!(sddl.contains("(A;CI;KR;;;BA)"), "{sddl}");
+    assert!(!sddl.contains(";;;BU)"), "{sddl}");
     Ok(())
 }
 
