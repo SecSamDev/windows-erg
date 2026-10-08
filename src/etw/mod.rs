@@ -130,6 +130,7 @@
 //! - `with_cpu_samples()` attaches processor-number metadata as `CpuSample`.
 
 mod decode;
+mod provider;
 mod schema;
 mod session;
 mod types;
@@ -139,6 +140,7 @@ pub use decode::{
     ImageUnloadEvent, ProcessEndEvent, ProcessStartEvent, RegistryEvent, RegistryOperation,
     TcpEvent, TcpOperation,
 };
+pub use provider::{EventData, EventDescriptor, EventProvider};
 pub use session::{EventStreamMode, EventTrace, EventTraceBuilder, KernelEventClass};
 pub use types::{CpuSample, StackTrace, SystemProvider, ThreadContext, TraceEvent, TraceLevel};
 /// Re-exported so callers of [`EventTraceBuilder::user_provider`] and

@@ -3,6 +3,10 @@
 //! - [`sha256`] hashes a byte slice.
 //! - [`EcdsaP256PublicKey`] verifies ECDSA P-256 signatures.
 //! - [`EcdsaP256PrivateKey`] generates keys and signs digests.
+//! - [`hmac_sha256`] authenticates a byte slice with a secret key.
+//! - [`AesGcmKey`] seals and opens data with AES-256-GCM.
+//! - [`random_bytes`] fills a buffer from the system RNG.
+//! - [`dpapi`] protects small secrets (such as a data key) with DPAPI.
 //!
 //! Signatures are 64 raw bytes, `r || s` (IEEE P1363), as CNG produces them.
 //! Keys keep only their bytes and import a CNG handle per call, so they are
@@ -20,13 +24,19 @@
 //! # Ok::<(), windows_erg::Error>(())
 //! ```
 
-use windows::Win32::Foundation::{NTSTATUS, STATUS_INVALID_SIGNATURE};
+pub mod dpapi;
+
+use windows::Win32::Foundation::{NTSTATUS, STATUS_AUTH_TAG_MISMATCH, STATUS_INVALID_SIGNATURE};
 use windows::Win32::Security::Cryptography::{
-    BCRYPT_ECCKEY_BLOB, BCRYPT_ECCPRIVATE_BLOB, BCRYPT_ECCPUBLIC_BLOB,
-    BCRYPT_ECDSA_P256_ALG_HANDLE, BCRYPT_ECDSA_PRIVATE_P256_MAGIC, BCRYPT_ECDSA_PUBLIC_P256_MAGIC,
-    BCRYPT_FLAGS, BCRYPT_KEY_HANDLE, BCRYPT_MD5_ALG_HANDLE, BCRYPT_SHA1_ALG_HANDLE,
-    BCRYPT_SHA256_ALG_HANDLE, BCryptDestroyKey, BCryptExportKey, BCryptFinalizeKeyPair,
-    BCryptGenerateKeyPair, BCryptHash, BCryptImportKeyPair, BCryptSignHash, BCryptVerifySignature,
+    BCRYPT_AES_GCM_ALG_HANDLE, BCRYPT_ALG_HANDLE, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO,
+    BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION, BCRYPT_ECCKEY_BLOB, BCRYPT_ECCPRIVATE_BLOB,
+    BCRYPT_ECCPUBLIC_BLOB, BCRYPT_ECDSA_P256_ALG_HANDLE, BCRYPT_ECDSA_PRIVATE_P256_MAGIC,
+    BCRYPT_ECDSA_PUBLIC_P256_MAGIC, BCRYPT_FLAGS, BCRYPT_HMAC_SHA256_ALG_HANDLE, BCRYPT_KEY_HANDLE,
+    BCRYPT_MD5_ALG_HANDLE, BCRYPT_SHA1_ALG_HANDLE, BCRYPT_SHA256_ALG_HANDLE,
+    BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptDecrypt, BCryptDestroyKey, BCryptEncrypt,
+    BCryptExportKey, BCryptFinalizeKeyPair, BCryptGenRandom, BCryptGenerateKeyPair,
+    BCryptGenerateSymmetricKey, BCryptHash, BCryptImportKeyPair, BCryptSignHash,
+    BCryptVerifySignature,
 };
 use windows::core::PCWSTR;
 
@@ -42,6 +52,14 @@ pub const MD5_LEN: usize = 16;
 pub const P256_PUBLIC_KEY_LEN: usize = 64;
 /// Length of a P-256 signature: `r || s`.
 pub const P256_SIGNATURE_LEN: usize = 64;
+/// Length of an AES-256 key.
+pub const AES256_KEY_LEN: usize = 32;
+/// Length of an AES-GCM nonce.
+pub const GCM_NONCE_LEN: usize = 12;
+/// Length of an AES-GCM authentication tag.
+pub const GCM_TAG_LEN: usize = 16;
+/// Length of an HMAC-SHA256 output.
+pub const HMAC_SHA256_LEN: usize = 32;
 /// Length of a serialised P-256 private key ([`EcdsaP256PrivateKey::to_blob`]).
 pub const P256_PRIVATE_BLOB_LEN: usize = HEADER_LEN + 3 * COORD_LEN;
 
@@ -76,6 +94,147 @@ pub fn md5(data: &[u8]) -> Result<[u8; MD5_LEN]> {
     let status = unsafe { BCryptHash(BCRYPT_MD5_ALG_HANDLE, None, data, &mut digest) };
     check(status, "BCryptHash")?;
     Ok(digest)
+}
+
+/// Fill `buffer` from the system-preferred RNG.
+pub fn random_bytes(buffer: &mut [u8]) -> Result<()> {
+    // SAFETY: BCRYPT_USE_SYSTEM_PREFERRED_RNG requires a null algorithm
+    // handle; `buffer` is a valid slice.
+    let status = unsafe {
+        BCryptGenRandom(
+            BCRYPT_ALG_HANDLE::default(),
+            buffer,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    check(status, "BCryptGenRandom")
+}
+
+/// HMAC-SHA256 of `data` under `key`.
+pub fn hmac_sha256(key: &[u8], data: &[u8]) -> Result<[u8; HMAC_SHA256_LEN]> {
+    let mut mac = [0u8; HMAC_SHA256_LEN];
+    // SAFETY: the pseudo-handle needs no setup; all buffers are valid slices.
+    let status = unsafe { BCryptHash(BCRYPT_HMAC_SHA256_ALG_HANDLE, Some(key), data, &mut mac) };
+    check(status, "BCryptHash")?;
+    Ok(mac)
+}
+
+/// An AES-256-GCM key.
+///
+/// Keeps only its bytes and creates a CNG key per call, like the ECDSA keys.
+/// The caller owns nonce uniqueness: never seal twice with the same key and
+/// nonce.
+#[derive(Clone)]
+pub struct AesGcmKey {
+    key: [u8; AES256_KEY_LEN],
+}
+
+impl AesGcmKey {
+    /// Key from its raw bytes.
+    pub fn from_bytes(key: &[u8; AES256_KEY_LEN]) -> Self {
+        Self { key: *key }
+    }
+
+    /// Encrypt `plaintext` and authenticate it together with `aad`.
+    /// Returns `ciphertext || tag`, [`GCM_TAG_LEN`] bytes longer than the
+    /// input. An empty `plaintext` gives a tag over `aad` alone.
+    pub fn seal(
+        &self,
+        nonce: &[u8; GCM_NONCE_LEN],
+        aad: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
+        let key = KeyHandle::aes_gcm(&self.key)?;
+        let mut sealed = vec![0u8; plaintext.len() + GCM_TAG_LEN];
+        let (output, tag) = sealed.split_at_mut(plaintext.len());
+        let info = cipher_info(nonce, aad, tag);
+        let mut written = 0u32;
+        // SAFETY: `key` is a live AES-GCM key; `info` points at `nonce`,
+        // `aad` and `tag`, which outlive the call; CNG only reads the nonce
+        // and aad and writes the tag; `output` is as long as `plaintext`.
+        let status = unsafe {
+            BCryptEncrypt(
+                key.0,
+                Some(plaintext),
+                Some(std::ptr::from_ref(&info).cast()),
+                None,
+                Some(output),
+                &mut written,
+                BCRYPT_FLAGS(0),
+            )
+        };
+        check(status, "BCryptEncrypt")?;
+        Ok(sealed)
+    }
+
+    /// Check and decrypt `ciphertext || tag` produced by [`seal`](Self::seal)
+    /// with the same nonce and `aad`. `Ok(None)` when it does not
+    /// authenticate (wrong key, nonce or aad, or modified data).
+    pub fn open(
+        &self,
+        nonce: &[u8; GCM_NONCE_LEN],
+        aad: &[u8],
+        sealed: &[u8],
+    ) -> Result<Option<Vec<u8>>> {
+        let Some(split) = sealed.len().checked_sub(GCM_TAG_LEN) else {
+            return Ok(None);
+        };
+        let (ciphertext, tag) = sealed.split_at(split);
+        let mut tag: [u8; GCM_TAG_LEN] = tag
+            .try_into()
+            .map_err(|_| invalid("sealed", "shorter than a GCM tag"))?;
+        let key = KeyHandle::aes_gcm(&self.key)?;
+        let mut plaintext = vec![0u8; ciphertext.len()];
+        let info = cipher_info(nonce, aad, &mut tag);
+        let mut written = 0u32;
+        // SAFETY: as in `seal`; on decrypt CNG only reads the tag.
+        let status = unsafe {
+            BCryptDecrypt(
+                key.0,
+                Some(ciphertext),
+                Some(std::ptr::from_ref(&info).cast()),
+                None,
+                Some(&mut plaintext),
+                &mut written,
+                BCRYPT_FLAGS(0),
+            )
+        };
+        if status == STATUS_AUTH_TAG_MISMATCH {
+            return Ok(None);
+        }
+        check(status, "BCryptDecrypt")?;
+        Ok(Some(plaintext))
+    }
+}
+
+impl std::fmt::Debug for AesGcmKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AesGcmKey").finish_non_exhaustive()
+    }
+}
+
+/// GCM parameters pointing into the caller's buffers. The nonce and aad are
+/// input only; their pointers are `*mut` because of the C struct.
+fn cipher_info(
+    nonce: &[u8; GCM_NONCE_LEN],
+    aad: &[u8],
+    tag: &mut [u8],
+) -> BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
+    BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
+        cbSize: std::mem::size_of::<BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO>() as u32,
+        dwInfoVersion: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION,
+        pbNonce: nonce.as_ptr().cast_mut(),
+        cbNonce: GCM_NONCE_LEN as u32,
+        pbAuthData: if aad.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            aad.as_ptr().cast_mut()
+        },
+        cbAuthData: aad.len() as u32,
+        pbTag: tag.as_mut_ptr(),
+        cbTag: tag.len() as u32,
+        ..Default::default()
+    }
 }
 
 /// An ECDSA P-256 public key.
@@ -246,6 +405,19 @@ impl KeyHandle {
     }
 }
 
+impl KeyHandle {
+    fn aes_gcm(secret: &[u8; AES256_KEY_LEN]) -> Result<Self> {
+        let mut handle = BCRYPT_KEY_HANDLE::default();
+        // SAFETY: the pseudo-handle needs no setup and lets CNG allocate the
+        // key object itself; CNG copies `secret`.
+        let status = unsafe {
+            BCryptGenerateSymmetricKey(BCRYPT_AES_GCM_ALG_HANDLE, &mut handle, None, secret, 0)
+        };
+        check(status, "BCryptGenerateSymmetricKey")?;
+        Ok(Self(handle))
+    }
+}
+
 impl Drop for KeyHandle {
     fn drop(&mut self) {
         // SAFETY: the handle came from CNG and is destroyed exactly once.
@@ -348,6 +520,85 @@ mod tests {
             EcdsaP256PublicKey::from_xy(&key.public_key().to_xy()),
             key.public_key()
         );
+    }
+
+    fn unhex(s: &str) -> Vec<u8> {
+        let s: String = s.split_whitespace().collect();
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn hmac_sha256_matches_rfc4231_case_2() {
+        assert_eq!(
+            hex(&hmac_sha256(b"Jefe", b"what do ya want for nothing?").unwrap()),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    #[test]
+    fn random_bytes_fill_the_buffer() {
+        let mut a = [0u8; 32];
+        let mut b = [0u8; 32];
+        random_bytes(&mut a).unwrap();
+        random_bytes(&mut b).unwrap();
+        assert_ne!(a, [0u8; 32]);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn aes_gcm_matches_the_gcm_spec_test_case_15() {
+        // McGrew & Viega, "The Galois/Counter Mode of Operation", test case
+        // 15: AES-256, 96-bit IV, no aad.
+        let key: [u8; 32] =
+            unhex("feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308")
+                .try_into()
+                .unwrap();
+        let nonce: [u8; 12] = unhex("cafebabefacedbaddecaf888").try_into().unwrap();
+        let plaintext = unhex(
+            "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a72
+             1c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255",
+        );
+        let sealed = AesGcmKey::from_bytes(&key)
+            .seal(&nonce, &[], &plaintext)
+            .unwrap();
+        assert_eq!(
+            sealed,
+            unhex(
+                "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa
+                 8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad
+                 b094dac5d93471bdec1a502270e3cc6c"
+            )
+        );
+    }
+
+    #[test]
+    fn aes_gcm_round_trips_and_rejects_tampering() {
+        let mut raw = [0u8; 32];
+        random_bytes(&mut raw).unwrap();
+        let key = AesGcmKey::from_bytes(&raw);
+        let nonce = [7u8; GCM_NONCE_LEN];
+        let sealed = key.seal(&nonce, b"header", b"detection").unwrap();
+        assert_eq!(sealed.len(), b"detection".len() + GCM_TAG_LEN);
+        assert_eq!(
+            key.open(&nonce, b"header", &sealed).unwrap().as_deref(),
+            Some(&b"detection"[..])
+        );
+
+        let mut flipped = sealed.clone();
+        flipped[0] ^= 1;
+        assert_eq!(key.open(&nonce, b"header", &flipped).unwrap(), None);
+        assert_eq!(key.open(&nonce, b"other", &sealed).unwrap(), None);
+        assert_eq!(key.open(&[8u8; 12], b"header", &sealed).unwrap(), None);
+        assert_eq!(key.open(&nonce, b"header", &sealed[..4]).unwrap(), None);
+
+        // Empty plaintext: an authenticate-only tag over the aad.
+        let tag = key.seal(&nonce, b"policy", &[]).unwrap();
+        assert_eq!(tag.len(), GCM_TAG_LEN);
+        assert_eq!(key.open(&nonce, b"policy", &tag).unwrap(), Some(Vec::new()));
+        assert_eq!(key.open(&nonce, b"policY", &tag).unwrap(), None);
     }
 
     #[test]
