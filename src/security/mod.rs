@@ -21,5 +21,5 @@ pub use editor::{
 };
 pub use process_token::{IntegrityLevel, ProcessToken};
 pub use rights::{FileAccess, RegistryAccess};
-pub use sid::Sid;
+pub use sid::{Account, AccountKind, Sid};
 pub use target::PermissionTarget;

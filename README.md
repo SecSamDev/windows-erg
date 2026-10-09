@@ -133,6 +133,18 @@ println!("added ACEs: {}", result.diff.added.len());
 # Ok::<(), windows_erg::Error>(())
 ```
 
+A SID resolves to its account name with `Sid::lookup_account()`
+(`LookupAccountSidW`): `Ok(None)` when nothing maps to it.
+
+```rust
+use windows_erg::security::Sid;
+
+if let Some(account) = Sid::parse("S-1-5-18")?.lookup_account()? {
+  println!("{account} ({:?})", account.kind); // NT AUTHORITY\SYSTEM (WellKnownGroup)
+}
+# Ok::<(), windows_erg::Error>(())
+```
+
 ## Permissions
 
 Some operations require administrator privileges:
