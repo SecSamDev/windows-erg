@@ -10,18 +10,16 @@ use windows::Win32::System::Diagnostics::Etw::{
     EVENTMAP_INFO_FLAG_MANIFEST_VALUEMAP, EVENTMAP_INFO_FLAG_WBEM_BITMAP,
     EVENTMAP_INFO_FLAG_WBEM_FLAG, EVENTMAP_INFO_FLAG_WBEM_VALUEMAP, PropertyParamCount,
     PropertyParamFixedCount, PropertyParamFixedLength, PropertyParamLength, PropertyStruct,
-    TDH_INTYPE_ANSISTRING, TDH_INTYPE_BOOLEAN, TDH_INTYPE_GUID, TDH_INTYPE_INT32, TDH_INTYPE_INT64,
-    TDH_INTYPE_POINTER, TDH_INTYPE_UINT8, TDH_INTYPE_UINT16, TDH_INTYPE_UINT32, TDH_INTYPE_UINT64,
-    TDH_INTYPE_UNICODESTRING, TDH_OUTTYPE_BOOLEAN, TDH_OUTTYPE_HEXINT8, TDH_OUTTYPE_HEXINT16,
-    TDH_OUTTYPE_HEXINT32, TDH_OUTTYPE_HEXINT64, TDH_OUTTYPE_HRESULT, TDH_OUTTYPE_IPV4,
-    TDH_OUTTYPE_IPV6, TDH_OUTTYPE_JSON, TDH_OUTTYPE_NTSTATUS, TDH_OUTTYPE_PID, TDH_OUTTYPE_PORT,
-    TDH_OUTTYPE_REDUCEDSTRING, TDH_OUTTYPE_SOCKETADDRESS, TDH_OUTTYPE_STRING, TDH_OUTTYPE_TID,
-    TDH_OUTTYPE_UTF8, TDH_OUTTYPE_WIN32ERROR, TDH_OUTTYPE_XML, TRACE_EVENT_INFO,
+    TDH_INTYPE_ANSISTRING, TDH_INTYPE_BOOLEAN, TDH_INTYPE_FILETIME, TDH_INTYPE_GUID,
+    TDH_INTYPE_HEXINT32, TDH_INTYPE_HEXINT64, TDH_INTYPE_INT32, TDH_INTYPE_INT64,
+    TDH_INTYPE_POINTER, TDH_INTYPE_SID, TDH_INTYPE_UINT8, TDH_INTYPE_UINT16, TDH_INTYPE_UINT32,
+    TDH_INTYPE_UINT64, TDH_INTYPE_UNICODESTRING, TDH_OUTTYPE_BOOLEAN, TDH_OUTTYPE_HEXINT8,
+    TDH_OUTTYPE_HEXINT16, TDH_OUTTYPE_HEXINT32, TDH_OUTTYPE_HEXINT64, TDH_OUTTYPE_HRESULT,
+    TDH_OUTTYPE_IPV4, TDH_OUTTYPE_IPV6, TDH_OUTTYPE_JSON, TDH_OUTTYPE_NTSTATUS, TDH_OUTTYPE_PID,
+    TDH_OUTTYPE_PORT, TDH_OUTTYPE_REDUCEDSTRING, TDH_OUTTYPE_SOCKETADDRESS, TDH_OUTTYPE_STRING,
+    TDH_OUTTYPE_TID, TDH_OUTTYPE_UTF8, TDH_OUTTYPE_WIN32ERROR, TDH_OUTTYPE_XML, TRACE_EVENT_INFO,
 };
 use windows::core::{GUID, PCWSTR};
-
-const TDH_INTYPE_IPV4_VALUE: i32 = 19;
-const TDH_INTYPE_IPV6_VALUE: i32 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct SchemaKey {
@@ -476,10 +474,11 @@ fn element_size_hint(prop: &PropertyMeta) -> Option<usize> {
         t if t == TDH_INTYPE_BOOLEAN.0 => Some(4),
         t if t == TDH_INTYPE_GUID.0 => Some(16),
         t if t == TDH_INTYPE_POINTER.0 => Some(8),
+        t if t == TDH_INTYPE_FILETIME.0 => Some(8),
+        t if t == TDH_INTYPE_HEXINT32.0 => Some(4),
+        t if t == TDH_INTYPE_HEXINT64.0 => Some(8),
         t if t == TDH_INTYPE_UNICODESTRING.0 => None,
         t if t == TDH_INTYPE_ANSISTRING.0 => None,
-        t if t == TDH_INTYPE_IPV4_VALUE => Some(4),
-        t if t == TDH_INTYPE_IPV6_VALUE => Some(16),
         _ => None,
     }
 }
@@ -593,19 +592,28 @@ fn parse_one_value(prop: &PropertyMeta, data: &[u8]) -> Option<(EventFieldValue,
                 Some((EventFieldValue::Pointer(u64::from_le_bytes(bytes)), 8))
             }
         }
-        t if t == TDH_INTYPE_IPV4_VALUE => {
-            let bytes: [u8; 4] = data.get(0..4)?.try_into().ok()?;
-            Some((
-                EventFieldValue::IpAddr(IpAddr::V4(Ipv4Addr::from(bytes))),
-                4,
-            ))
+        // FILETIME as raw 100 ns ticks since 1601, like the classic events'
+        // timestamps.
+        t if t == TDH_INTYPE_FILETIME.0 => {
+            let bytes: [u8; 8] = data.get(0..8)?.try_into().ok()?;
+            Some((EventFieldValue::U64(u64::from_le_bytes(bytes)), 8))
         }
-        t if t == TDH_INTYPE_IPV6_VALUE => {
-            let bytes: [u8; 16] = data.get(0..16)?.try_into().ok()?;
-            Some((
-                EventFieldValue::IpAddr(IpAddr::V6(Ipv6Addr::from(bytes))),
-                16,
-            ))
+        // In-types 19 and 20 are SID and HEXINT32. They were once decoded as
+        // IPv4/IPv6, which read 4 bytes of a variable-length SID and shifted
+        // every later field (Kernel-Process `MandatoryLabel`).
+        t if t == TDH_INTYPE_SID.0 => {
+            let (sid, consumed) = parse_sid(data)?;
+            Some((EventFieldValue::String(sid), consumed))
+        }
+        t if t == TDH_INTYPE_HEXINT32.0 => {
+            let bytes: [u8; 4] = data.get(0..4)?.try_into().ok()?;
+            let v = u32::from_le_bytes(bytes);
+            Some((EventFieldValue::String(format!("0x{v:08X}")), 4))
+        }
+        t if t == TDH_INTYPE_HEXINT64.0 => {
+            let bytes: [u8; 8] = data.get(0..8)?.try_into().ok()?;
+            let v = u64::from_le_bytes(bytes);
+            Some((EventFieldValue::String(format!("0x{v:016X}")), 8))
         }
         t if t == TDH_INTYPE_UNICODESTRING.0 => {
             let (s, consumed) = if size_hint >= 2 && size_hint <= data.len() {
@@ -799,6 +807,26 @@ fn parse_utf8_sized(data: &[u8], byte_len: usize) -> Option<(String, usize)> {
     Some((text, byte_len))
 }
 
+/// A binary SID (revision, sub-authority count, 6-byte big-endian authority,
+/// then that many little-endian `u32`s) as `S-R-A-S1-…`, plus its length.
+/// `None` when the payload is shorter than the SID it declares.
+fn parse_sid(data: &[u8]) -> Option<(String, usize)> {
+    use std::fmt::Write as _;
+
+    let header = data.get(0..8)?;
+    let count = header[1] as usize;
+    let len = 8 + 4 * count;
+    let subs = data.get(8..len)?;
+    let authority = header[2..8]
+        .iter()
+        .fold(0u64, |acc, b| (acc << 8) | u64::from(*b));
+    let mut text = format!("S-{}-{authority}", header[0]);
+    for chunk in subs.as_chunks::<4>().0 {
+        let _ = write!(text, "-{}", u32::from_le_bytes(*chunk));
+    }
+    Some((text, len))
+}
+
 fn parse_guid(data: &[u8]) -> Option<GUID> {
     let d1 = u32::from_le_bytes(data.get(0..4)?.try_into().ok()?);
     let d2 = u16::from_le_bytes(data.get(4..6)?.try_into().ok()?);
@@ -845,57 +873,85 @@ fn parse_ascii_cstr(data: &[u8]) -> Option<(String, usize)> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_ipv4_value() {
-        let prop = PropertyMeta {
-            name: "SourceIp".to_string(),
-            in_type: TDH_INTYPE_IPV4_VALUE,
+    fn scalar(name: &str, in_type: i32, length: u16) -> PropertyMeta {
+        PropertyMeta {
+            name: name.to_string(),
+            in_type,
             out_type: 0,
-            length: 4,
+            length,
             count: 1,
             count_property_index: None,
             length_property_index: None,
             map_name: None,
-        };
-
-        let data = [192, 168, 1, 10];
-        let (value, consumed) = parse_one_value(&prop, &data).expect("expected ipv4 value");
-
-        assert_eq!(consumed, 4);
-        match value {
-            EventFieldValue::IpAddr(ip) => {
-                assert_eq!(ip, IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)));
-            }
-            _ => panic!("expected EventFieldValue::IpAddr for IPv4"),
         }
     }
 
     #[test]
-    fn parse_ipv6_value() {
-        let prop = PropertyMeta {
-            name: "DestinationIp".to_string(),
-            in_type: TDH_INTYPE_IPV6_VALUE,
-            out_type: 0,
-            length: 16,
-            count: 1,
-            count_property_index: None,
-            length_property_index: None,
-            map_name: None,
-        };
+    fn parse_sid_value_consumes_the_whole_sid() {
+        // S-1-16-12288 (High mandatory label): one sub-authority.
+        let prop = scalar("MandatoryLabel", TDH_INTYPE_SID.0, 0);
+        let data = [1u8, 1, 0, 0, 0, 0, 0, 16, 0x00, 0x30, 0, 0, 0xAA];
+        let (value, consumed) = parse_one_value(&prop, &data).expect("expected sid");
 
-        let data: [u8; 16] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
-        let (value, consumed) = parse_one_value(&prop, &data).expect("expected ipv6 value");
-
-        assert_eq!(consumed, 16);
+        assert_eq!(consumed, 12);
         match value {
-            EventFieldValue::IpAddr(ip) => {
-                assert_eq!(
-                    ip,
-                    IpAddr::V6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1))
-                );
-            }
-            _ => panic!("expected EventFieldValue::IpAddr for IPv6"),
+            EventFieldValue::String(s) => assert_eq!(s, "S-1-16-12288"),
+            _ => panic!("expected EventFieldValue::String"),
         }
+    }
+
+    #[test]
+    fn parse_sid_value_rejects_a_truncated_sid() {
+        let prop = scalar("Sid", TDH_INTYPE_SID.0, 0);
+        // Declares two sub-authorities, carries one.
+        let data = [1u8, 2, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0];
+        assert!(parse_one_value(&prop, &data).is_none());
+    }
+
+    #[test]
+    fn fields_after_a_sid_stay_aligned() {
+        // Kernel-Process ProcessStart v3: ... IsElevated, MandatoryLabel, ImageName.
+        let schema = CachedSchema {
+            props: vec![
+                scalar("ProcessTokenIsElevated", TDH_INTYPE_UINT32.0, 4),
+                scalar("MandatoryLabel", TDH_INTYPE_SID.0, 0),
+                scalar("ImageName", TDH_INTYPE_UNICODESTRING.0, 0),
+            ],
+        };
+        let mut data = vec![1u8, 0, 0, 0];
+        data.extend_from_slice(&[1, 1, 0, 0, 0, 0, 0, 16, 0x00, 0x40, 0, 0]);
+        data.extend_from_slice(&[b'a', 0, b'.', 0, b'e', 0, 0, 0]);
+
+        let fields = parse_values(&schema, &data);
+        assert_eq!(fields.len(), 3);
+        assert!(matches!(fields[0].value, EventFieldValue::U32(1)));
+        assert!(matches!(&fields[1].value, EventFieldValue::String(s) if s == "S-1-16-16384"));
+        assert!(matches!(&fields[2].value, EventFieldValue::String(s) if s == "a.e"));
+    }
+
+    #[test]
+    fn parse_hexint32_in_type_formats_hex_string() {
+        let prop = scalar("ImageChecksum", TDH_INTYPE_HEXINT32.0, 4);
+        let data = [0x78u8, 0x56, 0x34, 0x12];
+        let (value, consumed) = parse_one_value(&prop, &data).expect("expected hexint32");
+
+        assert_eq!(consumed, 4);
+        match value {
+            EventFieldValue::String(s) => assert_eq!(s, "0x12345678"),
+            _ => panic!("expected EventFieldValue::String"),
+        }
+    }
+
+    #[test]
+    fn parse_filetime_as_raw_ticks() {
+        let prop = scalar("CreateTime", TDH_INTYPE_FILETIME.0, 8);
+        let ticks: u64 = 0x01DB_1234_5678_9ABC;
+        let mut data = ticks.to_le_bytes().to_vec();
+        data.push(0xFF);
+        let (value, consumed) = parse_one_value(&prop, &data).expect("expected filetime");
+
+        assert_eq!(consumed, 8);
+        assert!(matches!(value, EventFieldValue::U64(v) if v == ticks));
     }
 
     #[test]

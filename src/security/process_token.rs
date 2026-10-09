@@ -43,14 +43,28 @@ pub enum IntegrityLevel {
     System,
 }
 
-fn integrity_level_from_rid(rid: u32) -> IntegrityLevel {
-    match rid {
-        r if r < SECURITY_MANDATORY_LOW_RID as u32 => IntegrityLevel::Untrusted,
-        r if r < SECURITY_MANDATORY_MEDIUM_RID as u32 => IntegrityLevel::Low,
-        r if r < SECURITY_MANDATORY_HIGH_RID as u32 => IntegrityLevel::Medium,
-        r if r < SECURITY_MANDATORY_SYSTEM_RID as u32 => IntegrityLevel::High,
-        _ => IntegrityLevel::System,
+impl IntegrityLevel {
+    /// The level a mandatory-label RID (`S-1-16-<rid>`) falls in.
+    pub fn from_rid(rid: u32) -> Self {
+        match rid {
+            r if r < SECURITY_MANDATORY_LOW_RID as u32 => Self::Untrusted,
+            r if r < SECURITY_MANDATORY_MEDIUM_RID as u32 => Self::Low,
+            r if r < SECURITY_MANDATORY_HIGH_RID as u32 => Self::Medium,
+            r if r < SECURITY_MANDATORY_SYSTEM_RID as u32 => Self::High,
+            _ => Self::System,
+        }
     }
+
+    /// The level of a mandatory-label SID string such as `S-1-16-12288`, as
+    /// an ETW `MandatoryLabel` field decodes. `None` for any other SID.
+    pub fn from_label_sid(sid: &str) -> Option<Self> {
+        let rid = sid.strip_prefix("S-1-16-")?.parse::<u32>().ok()?;
+        Some(Self::from_rid(rid))
+    }
+}
+
+fn integrity_level_from_rid(rid: u32) -> IntegrityLevel {
+    IntegrityLevel::from_rid(rid)
 }
 
 /// A process's primary access token, opened with `TOKEN_QUERY`.
@@ -237,6 +251,24 @@ impl ProcessToken {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integrity_level_from_label_sid() {
+        assert_eq!(
+            IntegrityLevel::from_label_sid("S-1-16-12288"),
+            Some(IntegrityLevel::High)
+        );
+        assert_eq!(
+            IntegrityLevel::from_label_sid("S-1-16-16384"),
+            Some(IntegrityLevel::System)
+        );
+        assert_eq!(
+            IntegrityLevel::from_label_sid("S-1-16-8192"),
+            Some(IntegrityLevel::Medium)
+        );
+        assert_eq!(IntegrityLevel::from_label_sid("S-1-5-18"), None);
+        assert_eq!(IntegrityLevel::from_label_sid("S-1-16-x"), None);
+    }
 
     #[test]
     fn integrity_level_from_rid_is_monotonic_at_known_boundaries() {
