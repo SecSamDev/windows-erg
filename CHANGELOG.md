@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 This changelog currently captures the documented 0.1.0 feature surface that is present in the repository today. Future updates should append release entries rather than rewriting this snapshot.
 
+## [Unreleased]
+
+### Added
+
+- `security::Sid::lookup_account` resolves a SID to its account (`LookupAccountSidW`): domain, name and an `AccountKind`, displayed as `DOMAIN\name`; `Ok(None)` when no account maps to it.
+- `etw::EventTrace::user_provider_with` enables a user-mode provider at a level and `MatchAnyKeyword` mask.
+- `security::IntegrityLevel::from_rid` and `from_label_sid` read a mandatory-label SID.
+
 ## [0.2.0] - 2026-05-22
 
 ### Added

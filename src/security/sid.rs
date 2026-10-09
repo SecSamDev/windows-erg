@@ -1,8 +1,12 @@
 //! SID (Security Identifier) primitives.
 
 use crate::Result;
-use crate::error::{Error, SecurityError, SidParseError};
+use crate::error::{Error, SecurityError, SidParseError, WindowsApiError};
+use std::ffi::c_void;
 use std::fmt::Write;
+use windows::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_NONE_MAPPED};
+use windows::Win32::Security::{LookupAccountSidW, PSID, SID_NAME_USE};
+use windows::core::{PCWSTR, PWSTR};
 
 /// A validated Windows Security Identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -76,6 +80,148 @@ impl Sid {
     /// Case-insensitive compare for SID strings.
     pub fn eq_case_insensitive(&self, other: &str) -> bool {
         self.string.eq_ignore_ascii_case(other)
+    }
+
+    /// The account this SID names, looked up on the local system
+    /// (`LookupAccountSidW`).
+    ///
+    /// `Ok(None)` when no account maps to it (`ERROR_NONE_MAPPED`): a deleted
+    /// account, or one from a domain that cannot be reached. Names are
+    /// localised: `S-1-5-18` is `NT AUTHORITY\SYSTEM` on an English system
+    /// only.
+    ///
+    /// A domain account may need a domain controller and block until it
+    /// answers; logged-on users and local accounts resolve locally. Cache
+    /// the result rather than calling this per event.
+    pub fn lookup_account(&self) -> Result<Option<Account>> {
+        let sid = PSID(self.raw.as_ptr() as *mut c_void);
+        let mut name_len = 0u32;
+        let mut domain_len = 0u32;
+        let mut kind = SID_NAME_USE::default();
+        // SAFETY: a sizing call with no buffers and zero lengths, which
+        // fills in both lengths. `sid` points at the valid SID in
+        // `self.raw`, which the call only reads.
+        let sizing = unsafe {
+            LookupAccountSidW(
+                PCWSTR::null(),
+                sid,
+                PWSTR::null(),
+                &mut name_len,
+                PWSTR::null(),
+                &mut domain_len,
+                &mut kind,
+            )
+        };
+        match sizing {
+            Err(e) if e.code() == ERROR_NONE_MAPPED.to_hresult() => return Ok(None),
+            Err(e) if e.code() != ERROR_INSUFFICIENT_BUFFER.to_hresult() => {
+                return Err(lookup_error(e));
+            }
+            _ => {}
+        }
+
+        let mut name = vec![0u16; name_len as usize];
+        let mut domain = vec![0u16; domain_len as usize];
+        // SAFETY: both buffers hold the number of UTF-16 units the sizing
+        // call asked for, and the lengths passed say so. `sid` as above.
+        let lookup = unsafe {
+            LookupAccountSidW(
+                PCWSTR::null(),
+                sid,
+                PWSTR(name.as_mut_ptr()),
+                &mut name_len,
+                PWSTR(domain.as_mut_ptr()),
+                &mut domain_len,
+                &mut kind,
+            )
+        };
+        match lookup {
+            Err(e) if e.code() == ERROR_NONE_MAPPED.to_hresult() => return Ok(None),
+            Err(e) => return Err(lookup_error(e)),
+            Ok(()) => {}
+        }
+
+        // On success the lengths exclude the terminating NUL.
+        let text = |buffer: &[u16], len: u32| {
+            String::from_utf16_lossy(&buffer[..(len as usize).min(buffer.len())])
+        };
+        Ok(Some(Account {
+            domain: text(&domain, domain_len),
+            name: text(&name, name_len),
+            kind: AccountKind::from_raw(kind),
+        }))
+    }
+}
+
+fn lookup_error(e: windows::core::Error) -> Error {
+    Error::WindowsApi(WindowsApiError::with_context(e, "LookupAccountSidW"))
+}
+
+/// What a SID names, as `LookupAccountSidW` reports it (`SID_NAME_USE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccountKind {
+    /// A user account.
+    User,
+    /// A domain group.
+    Group,
+    /// A domain.
+    Domain,
+    /// A local group, such as `BUILTIN\Administrators`.
+    Alias,
+    /// A well-known group or account, such as `Everyone` or `SYSTEM`.
+    WellKnownGroup,
+    /// An account that was deleted.
+    DeletedAccount,
+    /// Not a valid account.
+    Invalid,
+    /// The type could not be determined.
+    Unknown,
+    /// A computer account.
+    Computer,
+    /// A mandatory integrity label.
+    Label,
+    /// A logon session.
+    LogonSession,
+}
+
+impl AccountKind {
+    fn from_raw(value: SID_NAME_USE) -> Self {
+        match value.0 {
+            1 => Self::User,
+            2 => Self::Group,
+            3 => Self::Domain,
+            4 => Self::Alias,
+            5 => Self::WellKnownGroup,
+            6 => Self::DeletedAccount,
+            7 => Self::Invalid,
+            9 => Self::Computer,
+            10 => Self::Label,
+            11 => Self::LogonSession,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// The account a [`Sid`] names, from [`Sid::lookup_account`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Account {
+    /// The domain or computer the account belongs to, or an authority such
+    /// as `NT AUTHORITY`. Empty for a few well-known groups (`Everyone`).
+    pub domain: String,
+    /// The account name.
+    pub name: String,
+    /// What kind of account it is.
+    pub kind: AccountKind,
+}
+
+/// `DOMAIN\name`, or `name` alone when the domain is empty.
+impl std::fmt::Display for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.domain.is_empty() {
+            write!(f, "{}", self.name)
+        } else {
+            write!(f, "{}\\{}", self.domain, self.name)
+        }
     }
 }
 
@@ -233,7 +379,9 @@ fn sid_to_string_with_size(sid: &[u8]) -> Option<(String, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::Sid;
+    use super::{Account, AccountKind, Sid};
+    use crate::process::Process;
+    use crate::security::ProcessToken;
 
     #[test]
     fn sid_round_trip_string_binary() {
@@ -253,6 +401,51 @@ mod tests {
     fn sid_parse_from_sddl_alias() {
         let sid = Sid::from_sddl_trustee("BA").expect("alias parse should succeed");
         assert_eq!(sid.as_str(), "S-1-5-32-544");
+    }
+
+    /// Real call. Names are localised, so only the kind is pinned.
+    #[test]
+    fn local_system_resolves_to_a_well_known_account() {
+        let account = Sid::parse("S-1-5-18")
+            .expect("parse")
+            .lookup_account()
+            .expect("lookup")
+            .expect("SYSTEM always maps");
+        assert_eq!(account.kind, AccountKind::WellKnownGroup);
+        assert!(!account.name.is_empty());
+        assert!(!account.domain.is_empty());
+    }
+
+    /// Real call: whoever runs the tests is a user account.
+    #[test]
+    fn the_current_user_resolves_to_a_user() {
+        let token = ProcessToken::open(&Process::current()).expect("own token");
+        let account = token
+            .user_sid()
+            .expect("own SID")
+            .lookup_account()
+            .expect("lookup")
+            .expect("the current user maps");
+        assert_eq!(account.kind, AccountKind::User);
+        assert!(account.to_string().contains('\\'), "{account}");
+    }
+
+    #[test]
+    fn an_unknown_sid_maps_to_nothing() {
+        let sid = Sid::parse("S-1-5-21-1-2-3-999999").expect("parse");
+        assert_eq!(sid.lookup_account().expect("lookup"), None);
+    }
+
+    #[test]
+    fn account_display_joins_domain_and_name() {
+        let mut account = Account {
+            domain: "HOST".to_string(),
+            name: "alice".to_string(),
+            kind: AccountKind::User,
+        };
+        assert_eq!(account.to_string(), r"HOST\alice");
+        account.domain.clear();
+        assert_eq!(account.to_string(), "alice");
     }
 
     #[test]
