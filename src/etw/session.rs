@@ -2,7 +2,7 @@
 
 use super::decode::{DecodedEvent, decode_from_record_parts};
 use super::schema::SchemaCache;
-use super::types::{CpuSample, StackTrace, SystemProvider, ThreadContext, TraceEvent};
+use super::types::{CpuSample, StackTrace, SystemProvider, ThreadContext, TraceEvent, TraceLevel};
 use crate::Result;
 use crate::error::{Error, EtwConsumeError, EtwError, EtwProviderError, EtwSessionError};
 use crate::types::ProcessId;
@@ -672,12 +672,20 @@ unsafe impl Send for EventTrace {}
 
 /// Builder for configuring an ETW trace session.
 ///
+/// One user-mode provider to enable, with its level and keyword mask.
+#[derive(Debug, Clone, Copy)]
+struct UserProviderSpec {
+    guid: GUID,
+    level: TraceLevel,
+    match_any_keyword: u64,
+}
+
 /// Obtained from [`EventTrace::builder`]. Chain configuration methods, then
 /// call [`start`][Self::start] to begin tracing and receive an [`EventTrace`] handle.
 pub struct EventTraceBuilder {
     name: String,
     system_providers: Vec<SystemProvider>,
-    user_providers: Vec<GUID>,
+    user_providers: Vec<UserProviderSpec>,
     buffer_size: u32,
     min_buffers: u32,
     max_buffers: u32,
@@ -741,8 +749,30 @@ impl EventTraceBuilder {
     ///
     /// User-mode providers cannot be mixed with kernel [`SystemProvider`]s in
     /// a single session.
-    pub fn user_provider(mut self, provider_guid: GUID) -> Self {
-        self.user_providers.push(provider_guid);
+    ///
+    /// Enables every keyword at verbose level. Use
+    /// [`user_provider_with`][Self::user_provider_with] to narrow it: with
+    /// detailed events on, every delivered event pays a TDH parse before the
+    /// consumer can filter it.
+    pub fn user_provider(self, provider_guid: GUID) -> Self {
+        self.user_provider_with(provider_guid, TraceLevel::Verbose, u64::MAX)
+    }
+
+    /// Add a user-mode ETW provider with a level and a `MatchAnyKeyword` mask.
+    ///
+    /// The provider delivers only events at `level` or more severe whose
+    /// keyword shares a bit with `match_any_keyword` (`EnableTraceEx2`).
+    pub fn user_provider_with(
+        mut self,
+        provider_guid: GUID,
+        level: TraceLevel,
+        match_any_keyword: u64,
+    ) -> Self {
+        self.user_providers.push(UserProviderSpec {
+            guid: provider_guid,
+            level,
+            match_any_keyword,
+        });
         self
     }
 
@@ -1101,14 +1131,15 @@ impl EventTraceBuilder {
         }
 
         if !is_kernel_session {
-            for provider_guid in &self.user_providers {
+            for provider in &self.user_providers {
+                let provider_guid = &provider.guid;
                 let enable_result = unsafe {
                     EnableTraceEx2(
                         session_handle,
                         provider_guid as *const GUID,
                         EVENT_CONTROL_CODE_ENABLE_PROVIDER.0,
-                        TRACE_LEVEL_VERBOSE as u8,
-                        u64::MAX,
+                        provider.level as u8,
+                        provider.match_any_keyword,
                         0,
                         0,
                         None,
