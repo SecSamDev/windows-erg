@@ -81,19 +81,46 @@ pub fn set_backdrop(window: WindowHandle, backdrop: Backdrop) {
 pub enum ControlTheme {
     /// The light items-view look of Windows 11 lists (no column lines).
     Light,
-    /// The dark items-view look Explorer uses in dark mode: list, header
-    /// and scroll bars.
+    /// The dark items-view look Explorer uses in dark mode, for a header.
     Dark,
+    /// Explorer's dark look, for a list view: dark scroll bars too.
+    DarkExplorer,
 }
 
 /// Theme a common control (a list view, its header, a scroll bar).
+///
+/// For the dark themes the control is first opted in to dark mode
+/// with uxtheme's `AllowDarkModeForWindow` (ordinal 133, undocumented like
+/// [`allow_dark_menus`]); without it a header keeps dark text on its dark
+/// background. Skipped where the export is missing.
 pub fn set_control_theme(control: WindowHandle, theme: ControlTheme) {
+    allow_dark_mode_for_window(control, theme != ControlTheme::Light);
     let name = match theme {
         ControlTheme::Light => w!("ItemsView"),
         ControlTheme::Dark => w!("DarkMode_ItemsView"),
+        ControlTheme::DarkExplorer => w!("DarkMode_Explorer"),
     };
     // SAFETY: a constant theme name; failure keeps the current look.
     let _ = unsafe { SetWindowTheme(HWND::from(control), name, PCWSTR::null()) };
+}
+
+fn uxtheme_ordinal(ordinal: usize) -> Option<unsafe extern "system" fn() -> isize> {
+    // SAFETY: loads a system DLL by name.
+    let module = unsafe { LoadLibraryW(w!("uxtheme.dll")) }.ok()?;
+    // SAFETY: an ordinal lookup (MAKEINTRESOURCEA(ordinal)).
+    unsafe { GetProcAddress(module, PCSTR(ordinal as *const u8)) }
+}
+
+fn allow_dark_mode_for_window(control: WindowHandle, allow: bool) {
+    let Some(proc) = uxtheme_ordinal(133) else {
+        return;
+    };
+    // SAFETY: export 133 is `BOOL AllowDarkModeForWindow(HWND, BOOL)` since
+    // Windows 10 1809.
+    let allow_dark: unsafe extern "system" fn(HWND, BOOL) -> BOOL =
+        unsafe { std::mem::transmute(proc) };
+    // SAFETY: plain call on a window handle.
+    let _ = unsafe { allow_dark(HWND::from(control), BOOL::from(allow)) };
 }
 
 /// Let popup menus follow dark mode.
@@ -103,12 +130,7 @@ pub fn set_control_theme(control: WindowHandle, theme: ControlTheme) {
 /// Explorer and many desktop apps do, and does nothing when that export is
 /// missing.
 pub fn allow_dark_menus(dark: bool) {
-    // SAFETY: loads a system DLL by name.
-    let Ok(module) = (unsafe { LoadLibraryW(w!("uxtheme.dll")) }) else {
-        return;
-    };
-    // SAFETY: an ordinal lookup (MAKEINTRESOURCEA(135)).
-    let Some(proc) = (unsafe { GetProcAddress(module, PCSTR(135usize as *const u8)) }) else {
+    let Some(proc) = uxtheme_ordinal(135) else {
         return;
     };
     // PreferredAppMode: 0 default, 1 allow dark, 2 force dark, 3 force light.

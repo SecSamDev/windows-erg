@@ -26,6 +26,7 @@ use windows::Win32::UI::Controls::{
     TCM_INSERTITEMW, TCN_SELCHANGE, WC_LISTVIEWW, WC_TABCONTROLW,
 };
 use windows::Win32::UI::HiDpi::SystemParametersInfoForDpi;
+use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, HMENU, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SendMessageW, UIS_SET,
     UISF_HIDEFOCUS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CHANGEUISTATE, WM_SETFONT, WM_SIZE, WS_CHILD,
@@ -265,6 +266,25 @@ impl ListView {
                 );
             }
         }
+    }
+
+    /// Draw the column headers' text in `color` (`COLORREF`). Themed
+    /// headers keep dark text even on a dark background; this subclasses
+    /// the list view to answer its header's custom-draw notifications.
+    /// Calling it again only changes the colour.
+    pub fn set_header_text_color(&self, color: u32) {
+        // SAFETY: installs (or updates, same id) a subclass whose procedure
+        // only reads `dwrefdata` as a colour; comctl32 removes it with the
+        // window.
+        unsafe {
+            let _ = SetWindowSubclass(
+                self.hwnd,
+                Some(header_color_subclass),
+                HEADER_COLOR_SUBCLASS_ID,
+                color as usize,
+            );
+        }
+        self.header().invalidate();
     }
 
     /// Set column `index`'s width in pixels.
@@ -557,6 +577,46 @@ impl ListViewTextRequest<'_> {
         }
         self.buffer[written] = 0;
     }
+}
+
+const HEADER_COLOR_SUBCLASS_ID: usize = 0x4247; // "BG"
+
+unsafe extern "system" fn header_color_subclass(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    color: usize,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::UI::Controls::NMCUSTOMDRAW;
+    use windows::Win32::UI::WindowsAndMessaging::WM_NOTIFY;
+
+    if msg == WM_NOTIFY && lparam.0 != 0 {
+        // SAFETY: WM_NOTIFY's lparam points to an NMHDR.
+        let header = unsafe { &*(lparam.0 as *const NMHDR) };
+        let from_header = header.hwndFrom
+            == HWND(
+                // SAFETY: plain message to the subclassed list view.
+                unsafe { SendMessageW(hwnd, LVM_GETHEADER, WPARAM(0), LPARAM(0)) }.0
+                    as *mut std::ffi::c_void,
+            );
+        if from_header && header.code == NM_CUSTOMDRAW {
+            // SAFETY: a header's NM_CUSTOMDRAW heads an NMCUSTOMDRAW.
+            let draw = unsafe { &*(lparam.0 as *const NMCUSTOMDRAW) };
+            if draw.dwDrawStage == CDDS_PREPAINT {
+                return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
+            }
+            if draw.dwDrawStage == CDDS_ITEMPREPAINT {
+                // SAFETY: the HDC is lent for this notification.
+                unsafe { SetTextColor(draw.hdc, COLORREF(color as u32)) };
+                return LRESULT(CDRF_DODEFAULT as isize);
+            }
+        }
+    }
+    // SAFETY: everything else goes to the list view's own procedure.
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
 /// Where a list view is in drawing.
