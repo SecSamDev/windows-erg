@@ -206,3 +206,21 @@ pub enum KnownFolder {
     /// Per-user roaming application data (`%APPDATA%`).
     RoamingAppData,
 }
+
+/// A calendar date and time in the machine's time zone, from
+/// [`filetime_to_local`](super::filetime_to_local).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LocalDateTime {
+    /// Year, e.g. 2026.
+    pub year: u16,
+    /// Month, 1 to 12.
+    pub month: u16,
+    /// Day of the month, 1 to 31.
+    pub day: u16,
+    /// Hour, 0 to 23.
+    pub hour: u16,
+    /// Minute, 0 to 59.
+    pub minute: u16,
+    /// Second, 0 to 59.
+    pub second: u16,
+}
