@@ -3,14 +3,38 @@
 //! This module provides:
 //! - Window enumeration for top-level and child windows
 //! - Query helpers for visibility, title, class, rectangle, and cloaked state
-//! - Notification area (tray) icon lifecycle and balloon notifications
+//! - Notification area (tray) icon lifecycle, balloon notifications and
+//!   click callbacks
+//! - Window classes and windows bound to a [`WindowHandler`], message posting
+//!   from other threads, and the message loop
+//! - Common controls (virtual list view, tab strip, status bar), popup
+//!   menus, per-monitor DPI and a single-instance guard
 
+mod controls;
+mod dpi;
+mod instance;
+mod menu;
+pub mod msg;
 mod tray;
 mod types;
+mod window;
 mod windows;
 
-pub use tray::{TrayIcon, TrayIconBuilder, TrayNotification};
+pub use controls::{
+    ControlNotify, GuiFont, ListView, ListViewTextRequest, StatusBar, TabControl, decode_notify,
+    init_common_controls,
+};
+pub use dpi::{
+    DEFAULT_DPI, dpi_for_window, scale, set_process_dpi_aware_per_monitor_v2, suggested_rect,
+};
+pub use instance::SingleInstance;
+pub use menu::PopupMenu;
+pub use tray::{TrayEvent, TrayIcon, TrayIconBuilder, TrayNotification, taskbar_created_message};
 pub use types::{BalloonIcon, CloakState, TrayIconId, WindowHandle, WindowInfo, WindowRect};
+pub use window::{
+    MessagePoster, Window, WindowBuilder, WindowClass, WindowClassBuilder, WindowHandler,
+    post_quit, run_message_loop,
+};
 
 use crate::Result;
 

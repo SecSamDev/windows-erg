@@ -75,6 +75,8 @@ windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
     
     # Other
     "Win32_System_Com",
@@ -186,6 +188,10 @@ path = "examples/desktop_windows.rs"
 [[example]]
 name = "desktop_tray_notification"
 path = "examples/desktop_tray_notification.rs"
+
+[[example]]
+name = "desktop_window_listview"
+path = "examples/desktop_window_listview.rs"
 
 [[example]]
 name = "pipes_list"
