@@ -27,9 +27,9 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::HiDpi::SystemParametersInfoForDpi;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, HMENU, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SendMessageW,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETFONT, WM_SIZE, WS_CHILD, WS_CLIPSIBLINGS,
-    WS_EX_CLIENTEDGE, WS_TABSTOP, WS_VISIBLE,
+    CreateWindowExW, HMENU, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SendMessageW, UIS_SET,
+    UISF_HIDEFOCUS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CHANGEUISTATE, WM_SETFONT, WM_SIZE, WS_CHILD,
+    WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE, WS_TABSTOP, WS_VISIBLE,
 };
 use windows::core::{PCWSTR, PWSTR};
 
@@ -120,8 +120,29 @@ pub struct ListView {
 }
 
 impl ListView {
-    /// Create a list view as a child of `parent` with the control `id`.
+    /// Create a list view as a child of `parent` with the control `id`,
+    /// with a sunken border.
     pub fn create(parent: WindowHandle, id: u16) -> Result<Self> {
+        Self::create_with_border(parent, id, true)
+    }
+
+    /// Create a borderless list view, for placing inside a drawn card. The
+    /// keyboard focus rectangle is hidden too, as in Windows 11 lists.
+    pub fn create_flat(parent: WindowHandle, id: u16) -> Result<Self> {
+        let list = Self::create_with_border(parent, id, false)?;
+        // SAFETY: plain message to an owned control: hide focus rectangles.
+        unsafe {
+            SendMessageW(
+                list.hwnd,
+                WM_CHANGEUISTATE,
+                WPARAM(((UISF_HIDEFOCUS << 16) | UIS_SET) as usize),
+                LPARAM(0),
+            );
+        }
+        Ok(list)
+    }
+
+    fn create_with_border(parent: WindowHandle, id: u16, border: bool) -> Result<Self> {
         let style = WS_CHILD
             | WS_VISIBLE
             | WS_TABSTOP
@@ -131,7 +152,11 @@ impl ListView {
             parent,
             id,
             style,
-            WS_EX_CLIENTEDGE,
+            if border {
+                WS_EX_CLIENTEDGE
+            } else {
+                WINDOW_EX_STYLE(0)
+            },
             "list view",
         )?;
         let extended = (LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER) as isize;

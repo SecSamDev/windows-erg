@@ -79,7 +79,7 @@ pub fn set_backdrop(window: WindowHandle, backdrop: Backdrop) {
 /// Appearance of a common control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlTheme {
-    /// The standard Explorer look.
+    /// The light items-view look of Windows 11 lists (no column lines).
     Light,
     /// The dark items-view look Explorer uses in dark mode: list, header
     /// and scroll bars.
@@ -89,7 +89,7 @@ pub enum ControlTheme {
 /// Theme a common control (a list view, its header, a scroll bar).
 pub fn set_control_theme(control: WindowHandle, theme: ControlTheme) {
     let name = match theme {
-        ControlTheme::Light => w!("Explorer"),
+        ControlTheme::Light => w!("ItemsView"),
         ControlTheme::Dark => w!("DarkMode_ItemsView"),
     };
     // SAFETY: a constant theme name; failure keeps the current look.
