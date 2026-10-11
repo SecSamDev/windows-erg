@@ -17,11 +17,12 @@ use windows::Win32::UI::Controls::{
     LVIR_BOUNDS, LVIS_FOCUSED, LVIS_SELECTED, LVITEMW, LVM_ENSUREVISIBLE, LVM_GETHEADER,
     LVM_GETNEXTITEM, LVM_GETSUBITEMRECT, LVM_INSERTCOLUMNW, LVM_SETBKCOLOR,
     LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMCOUNT, LVM_SETITEMSTATE, LVM_SETTEXTBKCOLOR,
-    LVM_SETTEXTCOLOR, LVN_GETDISPINFOW, LVN_ITEMCHANGED, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER,
-    LVS_EX_FULLROWSELECT, LVS_OWNERDATA, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL,
-    LVSICF_NOSCROLL, NM_CUSTOMDRAW, NM_DBLCLK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, NMLVDISPINFOW,
-    SB_SETTEXTW, SBARS_SIZEGRIP, STATUSCLASSNAMEW, TCIF_TEXT, TCITEMW, TCM_ADJUSTRECT,
-    TCM_GETCURSEL, TCM_GETITEMCOUNT, TCM_INSERTITEMW, TCN_SELCHANGE, WC_LISTVIEWW, WC_TABCONTROLW,
+    LVM_SETTEXTCOLOR, LVN_GETDISPINFOW, LVN_ITEMCHANGED, LVN_KEYDOWN, LVNI_SELECTED,
+    LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_OWNERDATA, LVS_REPORT, LVS_SHOWSELALWAYS,
+    LVS_SINGLESEL, LVSICF_NOSCROLL, NM_CUSTOMDRAW, NM_DBLCLK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW,
+    NMLVDISPINFOW, NMLVKEYDOWN, SB_SETTEXTW, SBARS_SIZEGRIP, STATUSCLASSNAMEW, TCIF_TEXT, TCITEMW,
+    TCM_ADJUSTRECT, TCM_GETCURSEL, TCM_GETITEMCOUNT, TCM_INSERTITEMW, TCN_SELCHANGE, WC_LISTVIEWW,
+    WC_TABCONTROLW,
 };
 use windows::Win32::UI::HiDpi::SystemParametersInfoForDpi;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -440,6 +441,14 @@ pub enum ControlNotify<'a> {
         /// The newly selected row.
         row: usize,
     },
+    /// A key was pressed in a list view (it does not reach the parent's
+    /// `WM_KEYDOWN`); `key` is the virtual-key code.
+    KeyDown {
+        /// Id of the list view.
+        control_id: usize,
+        /// Virtual-key code (`'C'` is 0x43).
+        key: u16,
+    },
     /// The selected tab changed.
     TabChanged {
         /// Id of the tab control.
@@ -687,6 +696,16 @@ pub unsafe fn decode_notify<'a>(lparam: isize) -> Option<ControlNotify<'a>> {
                 },
             }
         }
+        LVN_KEYDOWN => {
+            // SAFETY: LVN_KEYDOWN's NMHDR heads an NMLVKEYDOWN, which is
+            // packed: the field is read unaligned.
+            let key = unsafe {
+                std::ptr::read_unaligned(std::ptr::addr_of!(
+                    (*(lparam as *const NMLVKEYDOWN)).wVKey
+                ))
+            };
+            ControlNotify::KeyDown { control_id, key }
+        }
         TCN_SELCHANGE => ControlNotify::TabChanged { control_id },
         NM_DBLCLK => ControlNotify::DoubleClick { control_id },
         code => ControlNotify::Other { control_id, code },
@@ -832,6 +851,32 @@ mod tests {
         // SAFETY: as above.
         let notify = unsafe { decode_notify(&mut change as *mut _ as isize) };
         assert!(matches!(notify, Some(ControlNotify::Other { .. })));
+    }
+
+    #[test]
+    fn list_key_presses_decode() {
+        // NMLVKEYDOWN is packed; the control hands it over aligned, as here.
+        #[repr(C, align(8))]
+        struct Aligned(NMLVKEYDOWN);
+        let mut key = Aligned(NMLVKEYDOWN {
+            hdr: NMHDR {
+                hwndFrom: HWND::default(),
+                idFrom: 6,
+                code: LVN_KEYDOWN,
+            },
+            wVKey: 0x43,
+            flags: 0,
+        });
+        // SAFETY: `key` is a well-formed, aligned notification that
+        // outlives the decode.
+        let notify = unsafe { decode_notify(&mut key.0 as *mut _ as isize) };
+        assert!(matches!(
+            notify,
+            Some(ControlNotify::KeyDown {
+                control_id: 6,
+                key: 0x43
+            })
+        ));
     }
 
     #[test]
