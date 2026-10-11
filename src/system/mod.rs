@@ -43,8 +43,8 @@ use crate::registry::{self, Hive};
 use crate::utils::{OwnedHandle, pwstr_to_string, to_utf16_nul};
 
 pub use types::{
-    BiosInfo, GuidInfo, HostIdentity, HostSnapshot, KnownFolder, LogicalDiskInfo, MachineGuid,
-    NetworkInterfaceInfo, OsInfo, PhysicalDiskInfo, PowerAction, PowerActionOptions,
+    BiosInfo, GuidInfo, HostIdentity, HostSnapshot, KnownFolder, LocalDateTime, LogicalDiskInfo,
+    MachineGuid, NetworkInterfaceInfo, OsInfo, PhysicalDiskInfo, PowerAction, PowerActionOptions,
     SnapshotSection, SnapshotSectionError, UserInfo,
 };
 
@@ -181,6 +181,48 @@ pub fn known_folder(folder: KnownFolder) -> Result<std::path::PathBuf> {
         Error::Other(crate::error::OtherError::new(
             "SHGetKnownFolderPath returned an empty path",
         ))
+    })
+}
+
+/// Convert a FILETIME (100 ns intervals since 1601-01-01 UTC) to the local
+/// date and time, applying the daylight-saving rule in force on that date.
+///
+/// # Example
+///
+/// ```no_run
+/// use windows_erg::system::filetime_to_local;
+///
+/// let t = filetime_to_local(133_000_000_000_000_000)?;
+/// println!("{:04}-{:02}-{:02}", t.year, t.month, t.day);
+/// # Ok::<(), windows_erg::Error>(())
+/// ```
+pub fn filetime_to_local(filetime: u64) -> Result<LocalDateTime> {
+    use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+
+    let ft = FILETIME {
+        dwLowDateTime: filetime as u32,
+        dwHighDateTime: (filetime >> 32) as u32,
+    };
+    let mut utc = SYSTEMTIME::default();
+    // SAFETY: both pointers are valid for the call.
+    unsafe { FileTimeToSystemTime(&ft, &mut utc) }
+        .map_err(|e| Error::WindowsApi(WindowsApiError::with_context(e, "FileTimeToSystemTime")))?;
+    let mut local = SYSTEMTIME::default();
+    // SAFETY: `None` selects the active time zone; both pointers are valid.
+    unsafe { SystemTimeToTzSpecificLocalTime(None, &utc, &mut local) }.map_err(|e| {
+        Error::WindowsApi(WindowsApiError::with_context(
+            e,
+            "SystemTimeToTzSpecificLocalTime",
+        ))
+    })?;
+    Ok(LocalDateTime {
+        year: local.wYear,
+        month: local.wMonth,
+        day: local.wDay,
+        hour: local.wHour,
+        minute: local.wMinute,
+        second: local.wSecond,
     })
 }
 
@@ -1091,6 +1133,16 @@ mod tests {
     use windows::Win32::System::Shutdown::{
         SHTDN_REASON_FLAG_PLANNED, SHTDN_REASON_MAJOR_OTHER, SHTDN_REASON_MINOR_OTHER,
     };
+
+    #[test]
+    fn filetime_to_local_is_a_valid_date_near_the_utc_one() {
+        // 2026-01-15 12:00:00 UTC: no time zone moves this off the 14th..16th.
+        let t = super::filetime_to_local(134_129_520_000_000_000).expect("convert");
+        assert_eq!((t.year, t.month), (2026, 1));
+        assert!((14..=16).contains(&t.day), "{t:?}");
+        assert!(t.hour < 24 && t.minute < 60 && t.second < 60);
+        assert!(super::filetime_to_local(u64::MAX).is_err());
+    }
 
     #[test]
     fn parse_multi_sz_extracts_entries() {
