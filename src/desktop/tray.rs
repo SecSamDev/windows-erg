@@ -1,24 +1,33 @@
+use std::cell::RefCell;
+
 use windows::Win32::Foundation::{
     ERROR_CLASS_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_INFO, NIF_TIP, NIIF_ERROR, NIIF_INFO, NIIF_NONE, NIIF_WARNING, NIM_ADD,
-    NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIIF_ERROR, NIIF_INFO, NIIF_NONE,
+    NIIF_NOSOUND, NIIF_RESPECT_QUIET_TIME, NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NIM_SETVERSION, NIN_BALLOONUSERCLICK, NIN_SELECT, NOTIFY_ICON_DATA_FLAGS, NOTIFY_ICON_MESSAGE,
+    NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, HICON, HWND_MESSAGE, IDI_APPLICATION,
-    LoadIconW, RegisterClassW, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetSystemMetrics, HICON, HWND_MESSAGE,
+    IDI_APPLICATION, LoadIconW, RegisterClassW, RegisterWindowMessageW, SM_CXSMICON,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_CONTEXTMENU, WNDCLASSW,
 };
-use windows::core::PCWSTR;
+use windows::core::{PCWSTR, w};
 
 use crate::error::{DesktopError, DesktopOperationError, Error, InvalidParameterError, Result};
 use crate::utils::to_utf16_nul;
 
 use super::types::{BalloonIcon, TrayIconId, WindowHandle};
+use super::window::load_icon_resource;
 
 const DEFAULT_TRAY_WINDOW_CLASS_NAME: &str = "windows_erg_tray_window";
 const DEFAULT_TRAY_WINDOW_NAME: &str = "windows_erg_tray_window";
+
+/// `NIN_KEYSELECT` (`NIN_SELECT | NINF_KEY`): the icon chosen with the keyboard.
+const NIN_KEYSELECT: u32 = NIN_SELECT | 0x1;
 
 /// Balloon notification payload for a tray icon.
 #[derive(Debug, Clone)]
@@ -29,6 +38,11 @@ pub struct TrayNotification {
     pub body: String,
     /// Notification icon style.
     pub icon: BalloonIcon,
+    /// Hold the balloon while the user is in quiet time, full-screen or
+    /// presenting (`NIIF_RESPECT_QUIET_TIME`).
+    pub respect_quiet_time: bool,
+    /// Show the balloon without the notification sound (`NIIF_NOSOUND`).
+    pub silent: bool,
 }
 
 impl TrayNotification {
@@ -38,8 +52,65 @@ impl TrayNotification {
             title: title.into(),
             body: body.into(),
             icon,
+            respect_quiet_time: false,
+            silent: false,
         }
     }
+
+    /// Hold the balloon during quiet time (full-screen apps, presentations).
+    pub fn respect_quiet_time(mut self) -> Self {
+        self.respect_quiet_time = true;
+        self
+    }
+
+    /// Suppress the notification sound.
+    pub fn silent(mut self) -> Self {
+        self.silent = true;
+        self
+    }
+}
+
+/// What the user did to a tray icon that has a callback message
+/// ([`TrayIconBuilder::callback_message`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrayEvent {
+    /// Clicked, or chosen with the keyboard.
+    Select,
+    /// Asked for the context menu, at screen position `(x, y)`.
+    ContextMenu {
+        /// Horizontal anchor.
+        x: i32,
+        /// Vertical anchor.
+        y: i32,
+    },
+    /// Clicked the balloon.
+    BalloonClicked,
+    /// Anything else (mouse moves, button down/up, balloon shown or hidden).
+    Other(u32),
+}
+
+impl TrayEvent {
+    /// Decode the parameters of a callback message (`NOTIFYICON_VERSION_4`
+    /// layout: event in the low word of lparam, anchor point in wparam).
+    pub fn decode(wparam: usize, lparam: isize) -> Self {
+        let event = (lparam as usize & 0xFFFF) as u32;
+        match event {
+            NIN_SELECT | NIN_KEYSELECT => TrayEvent::Select,
+            WM_CONTEXTMENU => TrayEvent::ContextMenu {
+                x: i32::from((wparam & 0xFFFF) as u16 as i16),
+                y: i32::from(((wparam >> 16) & 0xFFFF) as u16 as i16),
+            },
+            NIN_BALLOONUSERCLICK => TrayEvent::BalloonClicked,
+            other => TrayEvent::Other(other),
+        }
+    }
+}
+
+/// The message Explorer broadcasts when the taskbar is (re)created. A tray
+/// owner that receives it must call [`TrayIcon::re_add`].
+pub fn taskbar_created_message() -> u32 {
+    // SAFETY: registers (or looks up) a constant, NUL-terminated name.
+    unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) }
 }
 
 /// Notification area icon with RAII lifecycle management.
@@ -49,6 +120,9 @@ pub struct TrayIcon {
     id: TrayIconId,
     icon_added: bool,
     owns_window: bool,
+    callback_message: Option<u32>,
+    hicon: HICON,
+    tooltip: RefCell<String>,
 }
 
 impl TrayIcon {
@@ -84,15 +158,9 @@ impl TrayIcon {
 
     /// Create a tray icon bound to an existing window handle.
     pub fn from_window(owner: WindowHandle, id: TrayIconId, tooltip: &str) -> Result<Self> {
-        let mut icon = TrayIcon {
-            hwnd: owner.into(),
-            id,
-            icon_added: false,
-            owns_window: false,
-        };
-
-        icon.add_icon(tooltip)?;
-        Ok(icon)
+        TrayIconBuilder::new(id, tooltip)
+            .owner_window(owner)
+            .create()
     }
 
     /// Show a tray balloon notification.
@@ -107,33 +175,33 @@ impl TrayIcon {
             BalloonIcon::Warning => NIIF_WARNING,
             BalloonIcon::Error => NIIF_ERROR,
         };
-
-        let ok = unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.as_bool();
-        if ok {
-            return Ok(());
+        if notification.respect_quiet_time {
+            data.dwInfoFlags |= NIIF_RESPECT_QUIET_TIME;
+        }
+        if notification.silent {
+            data.dwInfoFlags |= NIIF_NOSOUND;
         }
 
-        let code = unsafe { GetLastError().0 as i32 };
-        Err(Error::Desktop(DesktopError::OperationFailed(
-            DesktopOperationError::with_code("Shell_NotifyIconW", "NIM_MODIFY notification", code),
-        )))
+        notify(NIM_MODIFY, &data, "NIM_MODIFY notification")
     }
 
     /// Update tray icon tooltip text.
     pub fn update_tooltip(&self, tooltip: &str) -> Result<()> {
         let mut data = self.base_notify_data();
-        data.uFlags = NIF_TIP;
+        data.uFlags = NIF_TIP | self.show_tip_flag();
         copy_text_to_fixed(tooltip, &mut data.szTip);
 
-        let ok = unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) }.as_bool();
-        if ok {
-            return Ok(());
-        }
+        notify(NIM_MODIFY, &data, "NIM_MODIFY tooltip")?;
+        *self.tooltip.borrow_mut() = tooltip.to_string();
+        Ok(())
+    }
 
-        let code = unsafe { GetLastError().0 as i32 };
-        Err(Error::Desktop(DesktopError::OperationFailed(
-            DesktopOperationError::with_code("Shell_NotifyIconW", "NIM_MODIFY tooltip", code),
-        )))
+    /// Add the icon again after Explorer restarted (on the message from
+    /// [`taskbar_created_message`]), with its last tooltip.
+    pub fn re_add(&mut self) -> Result<()> {
+        self.icon_added = false;
+        let tooltip = self.tooltip.borrow().clone();
+        self.add_icon(&tooltip)
     }
 
     /// Explicitly remove the tray icon.
@@ -143,34 +211,40 @@ impl TrayIcon {
         }
 
         let data = self.base_notify_data();
-        let ok = unsafe { Shell_NotifyIconW(NIM_DELETE, &data) }.as_bool();
-        if !ok {
-            let code = unsafe { GetLastError().0 as i32 };
-            return Err(Error::Desktop(DesktopError::OperationFailed(
-                DesktopOperationError::with_code("Shell_NotifyIconW", "NIM_DELETE", code),
-            )));
-        }
-
+        notify(NIM_DELETE, &data, "NIM_DELETE")?;
         self.icon_added = false;
         Ok(())
     }
 
     fn add_icon(&mut self, tooltip: &str) -> Result<()> {
         let mut data = self.base_notify_data();
-        data.uFlags = NIF_ICON | NIF_TIP;
-        data.hIcon = load_default_icon();
+        data.uFlags = NIF_ICON | NIF_TIP | self.show_tip_flag();
+        data.hIcon = self.hicon;
         copy_text_to_fixed(tooltip, &mut data.szTip);
-
-        let ok = unsafe { Shell_NotifyIconW(NIM_ADD, &data) }.as_bool();
-        if !ok {
-            let code = unsafe { GetLastError().0 as i32 };
-            return Err(Error::Desktop(DesktopError::OperationFailed(
-                DesktopOperationError::with_code("Shell_NotifyIconW", "NIM_ADD", code),
-            )));
+        if let Some(message) = self.callback_message {
+            data.uFlags |= NIF_MESSAGE;
+            data.uCallbackMessage = message;
         }
 
+        notify(NIM_ADD, &data, "NIM_ADD")?;
         self.icon_added = true;
+        *self.tooltip.borrow_mut() = tooltip.to_string();
+
+        if self.callback_message.is_some() {
+            let mut version = self.base_notify_data();
+            version.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+            notify(NIM_SETVERSION, &version, "NIM_SETVERSION")?;
+        }
         Ok(())
+    }
+
+    /// Version 4 icons show the standard tooltip only with `NIF_SHOWTIP`.
+    fn show_tip_flag(&self) -> NOTIFY_ICON_DATA_FLAGS {
+        if self.callback_message.is_some() {
+            NIF_SHOWTIP
+        } else {
+            NOTIFY_ICON_DATA_FLAGS(0)
+        }
     }
 
     fn base_notify_data(&self) -> NOTIFYICONDATAW {
@@ -191,6 +265,8 @@ pub struct TrayIconBuilder {
     owner: Option<WindowHandle>,
     window_class_name: String,
     window_name: String,
+    callback_message: Option<u32>,
+    icon_resource: Option<u16>,
 }
 
 impl TrayIconBuilder {
@@ -202,6 +278,8 @@ impl TrayIconBuilder {
             owner: None,
             window_class_name: DEFAULT_TRAY_WINDOW_CLASS_NAME.to_string(),
             window_name: DEFAULT_TRAY_WINDOW_NAME.to_string(),
+            callback_message: None,
+            icon_resource: None,
         }
     }
 
@@ -226,10 +304,31 @@ impl TrayIconBuilder {
         self
     }
 
+    /// Send user actions on the icon to the owner window as `message`
+    /// (decode with [`TrayEvent::decode`]). Uses `NOTIFYICON_VERSION_4`.
+    /// Only useful with [`Self::owner_window`]: the internal window ignores them.
+    pub fn callback_message(mut self, message: u32) -> Self {
+        self.callback_message = Some(message);
+        self
+    }
+
+    /// Use the icon with this resource id from the executable instead of
+    /// the generic application icon.
+    pub fn icon_resource(mut self, id: u16) -> Self {
+        self.icon_resource = Some(id);
+        self
+    }
+
     /// Create the tray icon instance.
     pub fn create(self) -> Result<TrayIcon> {
         validate_window_name("window_class_name", &self.window_class_name)?;
         validate_window_name("window_name", &self.window_name)?;
+
+        let hicon = match self.icon_resource {
+            // SAFETY: GetSystemMetrics only reads a metric.
+            Some(id) => load_icon_resource(id, unsafe { GetSystemMetrics(SM_CXSMICON) })?,
+            None => load_default_icon(),
+        };
 
         let hwnd = match self.owner {
             Some(owner) => owner.into(),
@@ -241,6 +340,9 @@ impl TrayIconBuilder {
             id: self.id,
             icon_added: false,
             owns_window: self.owner.is_none(),
+            callback_message: self.callback_message,
+            hicon,
+            tooltip: RefCell::new(String::new()),
         };
 
         icon.add_icon(&self.tooltip)?;
@@ -253,6 +355,7 @@ impl Drop for TrayIcon {
         let _ = self.remove();
 
         if self.owns_window && !self.hwnd.0.is_null() {
+            // SAFETY: the window was created by this icon and is destroyed once.
             unsafe {
                 let _ = DestroyWindow(self.hwnd);
             }
@@ -260,7 +363,20 @@ impl Drop for TrayIcon {
     }
 }
 
+fn notify(message: NOTIFY_ICON_MESSAGE, data: &NOTIFYICONDATAW, what: &'static str) -> Result<()> {
+    // SAFETY: `data` is a valid, sized NOTIFYICONDATAW.
+    if unsafe { Shell_NotifyIconW(message, data) }.as_bool() {
+        return Ok(());
+    }
+    // SAFETY: reads the calling thread's last-error value.
+    let code = unsafe { GetLastError().0 as i32 };
+    Err(Error::Desktop(DesktopError::OperationFailed(
+        DesktopOperationError::with_code("Shell_NotifyIconW", what, code),
+    )))
+}
+
 fn create_message_window(class_name: &str, window_name: &str) -> Result<HWND> {
+    // SAFETY: `None` asks for the executable's own module handle.
     let instance = unsafe { GetModuleHandleW(None) }.map_err(|e| {
         Error::Desktop(DesktopError::OperationFailed(
             DesktopOperationError::with_code("GetModuleHandleW", "tray window class", e.code().0),
@@ -277,8 +393,10 @@ fn create_message_window(class_name: &str, window_name: &str) -> Result<HWND> {
         ..Default::default()
     };
 
+    // SAFETY: `wnd_class` and its name buffer outlive the call.
     let class_atom = unsafe { RegisterClassW(&wnd_class) };
     if class_atom == 0 {
+        // SAFETY: reads the calling thread's last-error value.
         let code = unsafe { GetLastError() };
         if code != ERROR_CLASS_ALREADY_EXISTS {
             return Err(Error::Desktop(DesktopError::OperationFailed(
@@ -291,6 +409,7 @@ fn create_message_window(class_name: &str, window_name: &str) -> Result<HWND> {
         }
     }
 
+    // SAFETY: the name buffers outlive the call; a message-only window.
     let hwnd = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
@@ -317,6 +436,7 @@ fn create_message_window(class_name: &str, window_name: &str) -> Result<HWND> {
 }
 
 fn load_default_icon() -> HICON {
+    // SAFETY: a predefined system icon; no module handle is needed.
     unsafe { LoadIconW(None, IDI_APPLICATION).unwrap_or_default() }
 }
 
@@ -326,6 +446,7 @@ unsafe extern "system" fn tray_window_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    // SAFETY: default processing for the internal message window.
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
@@ -358,4 +479,40 @@ fn validate_window_name(field: &'static str, value: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_4_callbacks_decode() {
+        assert_eq!(TrayEvent::decode(0, NIN_SELECT as isize), TrayEvent::Select);
+        assert_eq!(
+            TrayEvent::decode(0, NIN_KEYSELECT as isize),
+            TrayEvent::Select
+        );
+        // Icon id 3 in the high word must not change the event.
+        let lparam = ((3 << 16) | WM_CONTEXTMENU) as isize;
+        let wparam = (200usize << 16) | 100;
+        assert_eq!(
+            TrayEvent::decode(wparam, lparam),
+            TrayEvent::ContextMenu { x: 100, y: 200 }
+        );
+        assert_eq!(
+            TrayEvent::decode(0, NIN_BALLOONUSERCLICK as isize),
+            TrayEvent::BalloonClicked
+        );
+        assert_eq!(TrayEvent::decode(0, 0x200), TrayEvent::Other(0x200));
+    }
+
+    #[test]
+    fn negative_anchor_coordinates_survive() {
+        // A secondary monitor left of the primary has negative x.
+        let wparam = (50usize << 16) | 0xFFF6; // x = -10
+        assert_eq!(
+            TrayEvent::decode(wparam, WM_CONTEXTMENU as isize),
+            TrayEvent::ContextMenu { x: -10, y: 50 }
+        );
+    }
 }

@@ -45,7 +45,7 @@ windows-erg = "0.1"
 ## Core Modules
 
 - process: process and thread enumeration, process tree operations, module inspection
-- desktop: desktop window enumeration, tray icon lifecycle, tray balloon notifications
+- desktop: window enumeration; tray icons with balloons and click callbacks; windows bound to a handler, cross-thread message posting and the message loop; virtual list view, tab strip, status bar, popup menus, per-monitor DPI and a single-instance guard
 - registry: key/value operations with ergonomic typed access
 - evt: Windows Event Log query and rendering
 - etw: ETW session and event consumption support, and writing events as a manifest-based provider
@@ -190,6 +190,7 @@ See examples:
 - examples/process_mitigation.rs
 - examples/desktop_windows.rs
 - examples/desktop_tray_notification.rs
+- examples/desktop_window_listview.rs
 - examples/registry_basics.rs
 - examples/registry_operations.rs
 - examples/registry_write.rs
@@ -282,6 +283,7 @@ cargo run --example etw_user_mode_provider
 **Side-effect examples** — modify state or require elevated privileges:
 ```powershell
 cargo run --example desktop_tray_notification   # 5s UI notification
+cargo run --example desktop_window_listview     # tabs, 200-row virtual list, tray menu
 cargo run --example process_spawn_parented       # spawns notepad as explorer child
 cargo run --example process_tree                 # spawns and kills test process
 cargo run --example process_wait_any             # multiple timeout scenarios (~8s)
