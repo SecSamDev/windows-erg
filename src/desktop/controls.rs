@@ -10,19 +10,19 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDDS_SUBITEM, CDIS_SELECTED, CDRF_DODEFAULT, CDRF_NEWFONT,
-    CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT, ICC_BAR_CLASSES,
-    ICC_LISTVIEW_CLASSES, ICC_TAB_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
-    LIST_VIEW_ITEM_STATE_FLAGS, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_STATE, LVIF_TEXT,
-    LVIR_BOUNDS, LVIS_FOCUSED, LVIS_SELECTED, LVITEMW, LVM_ENSUREVISIBLE, LVM_GETHEADER,
-    LVM_GETNEXTITEM, LVM_GETSUBITEMRECT, LVM_INSERTCOLUMNW, LVM_SETBKCOLOR,
-    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMCOUNT, LVM_SETITEMSTATE, LVM_SETTEXTBKCOLOR,
-    LVM_SETTEXTCOLOR, LVN_GETDISPINFOW, LVN_ITEMCHANGED, LVN_KEYDOWN, LVNI_SELECTED,
-    LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_OWNERDATA, LVS_REPORT, LVS_SHOWSELALWAYS,
-    LVS_SINGLESEL, LVSICF_NOSCROLL, NM_CUSTOMDRAW, NM_DBLCLK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW,
-    NMLVDISPINFOW, NMLVKEYDOWN, SB_SETTEXTW, SBARS_SIZEGRIP, STATUSCLASSNAMEW, TCIF_TEXT, TCITEMW,
-    TCM_ADJUSTRECT, TCM_GETCURSEL, TCM_GETITEMCOUNT, TCM_INSERTITEMW, TCN_SELCHANGE, WC_LISTVIEWW,
-    WC_TABCONTROLW,
+    CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDDS_SUBITEM, CDIS_SELECTED,
+    CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT,
+    CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES,
+    ICC_TAB_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LIST_VIEW_ITEM_STATE_FLAGS,
+    LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_STATE, LVIF_TEXT, LVIR_BOUNDS, LVIS_FOCUSED,
+    LVIS_SELECTED, LVITEMW, LVM_ENSUREVISIBLE, LVM_GETHEADER, LVM_GETNEXTITEM, LVM_GETSUBITEMRECT,
+    LVM_INSERTCOLUMNW, LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMCOUNT,
+    LVM_SETITEMSTATE, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVN_GETDISPINFOW, LVN_ITEMCHANGED,
+    LVN_KEYDOWN, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_OWNERDATA,
+    LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL, LVSICF_NOSCROLL, NM_CUSTOMDRAW, NM_DBLCLK, NMHDR,
+    NMLISTVIEW, NMLVCUSTOMDRAW, NMLVDISPINFOW, NMLVKEYDOWN, SB_SETTEXTW, SBARS_SIZEGRIP,
+    STATUSCLASSNAMEW, TCIF_TEXT, TCITEMW, TCM_ADJUSTRECT, TCM_GETCURSEL, TCM_GETITEMCOUNT,
+    TCM_INSERTITEMW, TCN_SELCHANGE, WC_LISTVIEWW, WC_TABCONTROLW,
 };
 use windows::Win32::UI::HiDpi::SystemParametersInfoForDpi;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -505,6 +505,9 @@ pub enum DrawStage {
     Row,
     /// Before one cell of a row (after [`ListViewCustomDraw::notify_cells`]).
     Cell,
+    /// After a row was drawn (after [`ListViewCustomDraw::notify_post_paint`]):
+    /// paint over it, selection highlight included.
+    RowPostPaint,
     /// Any other stage.
     Other,
 }
@@ -528,6 +531,8 @@ impl ListViewCustomDraw<'_> {
             DrawStage::Cell
         } else if stage == CDDS_ITEMPREPAINT {
             DrawStage::Row
+        } else if stage == CDDS_ITEMPOSTPAINT {
+            DrawStage::RowPostPaint
         } else {
             DrawStage::Other
         }
@@ -624,6 +629,12 @@ impl ListViewCustomDraw<'_> {
     /// Answer for [`DrawStage::Row`]: ask for each cell of the row.
     pub fn notify_cells() -> isize {
         CDRF_NOTIFYSUBITEMDRAW as isize
+    }
+
+    /// Answer for [`DrawStage::Row`]: send [`DrawStage::RowPostPaint`] once
+    /// the row is drawn. Combine with other answers using `|`.
+    pub fn notify_post_paint() -> isize {
+        CDRF_NOTIFYPOSTPAINT as isize
     }
 
     /// Answer after changing colours: draw normally with them.
@@ -810,6 +821,10 @@ mod tests {
         raw.nmcd.dwItemSpec = 9;
         assert_eq!(decode(&mut raw), (DrawStage::Row, 9, 0));
 
+        raw.nmcd.dwDrawStage = CDDS_ITEMPOSTPAINT;
+        assert_eq!(decode(&mut raw).0, DrawStage::RowPostPaint);
+
+        raw.nmcd.dwDrawStage = CDDS_ITEMPREPAINT;
         raw.nmcd.dwDrawStage.0 |= CDDS_SUBITEM.0;
         raw.iSubItem = 2;
         assert_eq!(decode(&mut raw), (DrawStage::Cell, 9, 2));
