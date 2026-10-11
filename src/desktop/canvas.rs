@@ -14,8 +14,9 @@ use windows::Win32::Graphics::Direct2D::Common::{
 use windows::Win32::Graphics::Direct2D::{
     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_ELLIPSE,
     D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_HWND_RENDER_TARGET_PROPERTIES,
-    D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES, D2D1_ROUNDED_RECT, D2D1CreateFactory,
-    ID2D1Factory, ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
+    D2D1_PRESENT_OPTIONS_NONE, D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT,
+    D2D1_RENDER_TARGET_TYPE_SOFTWARE, D2D1_ROUNDED_RECT, D2D1CreateFactory, ID2D1Factory,
+    ID2D1HwndRenderTarget, ID2D1SolidColorBrush,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -331,8 +332,15 @@ fn first_installed(dwrite: &IDWriteFactory, families: &[&str]) -> Option<String>
 
 /// A Direct2D render target bound to one window. Draw only while handling
 /// that window's `WM_PAINT`, inside a [`PaintGuard`](super::PaintGuard).
+///
+/// [`Canvas::for_window`] renders in software: no Direct3D device, so the
+/// GPU driver (tens of MB and a dozen threads that stay loaded) is never
+/// pulled into the process. Right for forms and dashboards, and for anything
+/// that runs beside a game. [`Canvas::for_window_hardware`] uses the GPU,
+/// for animation.
 pub struct Canvas {
     hwnd: HWND,
+    hardware: bool,
     target: Option<ID2D1HwndRenderTarget>,
     brush: Option<ID2D1SolidColorBrush>,
     dpi: u32,
@@ -348,10 +356,21 @@ impl std::fmt::Debug for Canvas {
 }
 
 impl Canvas {
-    /// A canvas for `window`. The device resources are made on first draw.
+    /// A software-rendered canvas for `window`. The resources are made on
+    /// first draw.
     pub fn for_window(window: WindowHandle) -> Self {
+        Self::new(window, false)
+    }
+
+    /// A GPU-rendered canvas for `window`.
+    pub fn for_window_hardware(window: WindowHandle) -> Self {
+        Self::new(window, true)
+    }
+
+    fn new(window: WindowHandle, hardware: bool) -> Self {
         Self {
             hwnd: window.into(),
+            hardware,
             target: None,
             brush: None,
             dpi: dpi_for_window(window),
@@ -425,6 +444,11 @@ impl Canvas {
         let factories = factories()?;
         let (width, height) = client_pixels(self.hwnd);
         let properties = D2D1_RENDER_TARGET_PROPERTIES {
+            r#type: if self.hardware {
+                D2D1_RENDER_TARGET_TYPE_DEFAULT
+            } else {
+                D2D1_RENDER_TARGET_TYPE_SOFTWARE
+            },
             pixelFormat: D2D1_PIXEL_FORMAT {
                 format: DXGI_FORMAT_UNKNOWN,
                 alphaMode: D2D1_ALPHA_MODE_UNKNOWN,
