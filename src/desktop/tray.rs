@@ -196,6 +196,18 @@ impl TrayIcon {
         Ok(())
     }
 
+    /// Show the icon with this resource id from the executable instead.
+    pub fn set_icon_resource(&mut self, id: u16) -> Result<()> {
+        // SAFETY: GetSystemMetrics only reads a metric.
+        let hicon = load_icon_resource(id, unsafe { GetSystemMetrics(SM_CXSMICON) })?;
+        let mut data = self.base_notify_data();
+        data.uFlags = NIF_ICON;
+        data.hIcon = hicon;
+        notify(NIM_MODIFY, &data, "NIM_MODIFY icon")?;
+        self.hicon = hicon;
+        Ok(())
+    }
+
     /// Add the icon again after Explorer restarted (on the message from
     /// [`taskbar_created_message`]), with its last tooltip.
     pub fn re_add(&mut self) -> Result<()> {
