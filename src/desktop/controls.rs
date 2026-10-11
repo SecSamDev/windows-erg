@@ -13,14 +13,15 @@ use windows::Win32::UI::Controls::{
     CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDDS_SUBITEM, CDIS_SELECTED,
     CDRF_DODEFAULT, CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT,
     CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT, ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES,
-    ICC_TAB_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LIST_VIEW_ITEM_STATE_FLAGS,
-    LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_STATE, LVIF_TEXT, LVIR_BOUNDS, LVIS_FOCUSED,
-    LVIS_SELECTED, LVITEMW, LVM_ENSUREVISIBLE, LVM_GETHEADER, LVM_GETNEXTITEM, LVM_GETSUBITEMRECT,
-    LVM_INSERTCOLUMNW, LVM_SETBKCOLOR, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMCOUNT,
-    LVM_SETITEMSTATE, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVN_GETDISPINFOW, LVN_ITEMCHANGED,
-    LVN_KEYDOWN, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_OWNERDATA,
-    LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL, LVSICF_NOSCROLL, NM_CUSTOMDRAW, NM_DBLCLK, NMHDR,
-    NMLISTVIEW, NMLVCUSTOMDRAW, NMLVDISPINFOW, NMLVKEYDOWN, SB_SETTEXTW, SBARS_SIZEGRIP,
+    ICC_TAB_CLASSES, ILC_COLOR32, INITCOMMONCONTROLSEX, ImageList_Create, InitCommonControlsEx,
+    LIST_VIEW_ITEM_STATE_FLAGS, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_STATE, LVIF_TEXT,
+    LVIR_BOUNDS, LVIS_FOCUSED, LVIS_SELECTED, LVITEMW, LVM_ENSUREVISIBLE, LVM_GETHEADER,
+    LVM_GETNEXTITEM, LVM_GETSUBITEMRECT, LVM_INSERTCOLUMNW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
+    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETIMAGELIST, LVM_SETITEMCOUNT, LVM_SETITEMSTATE,
+    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVN_GETDISPINFOW, LVN_ITEMCHANGED, LVN_KEYDOWN,
+    LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_OWNERDATA, LVS_REPORT,
+    LVS_SHOWSELALWAYS, LVS_SINGLESEL, LVSICF_NOSCROLL, LVSIL_SMALL, NM_CUSTOMDRAW, NM_DBLCLK,
+    NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, NMLVDISPINFOW, NMLVKEYDOWN, SB_SETTEXTW, SBARS_SIZEGRIP,
     STATUSCLASSNAMEW, TCIF_TEXT, TCITEMW, TCM_ADJUSTRECT, TCM_GETCURSEL, TCM_GETITEMCOUNT,
     TCM_INSERTITEMW, TCN_SELCHANGE, WC_LISTVIEWW, WC_TABCONTROLW,
 };
@@ -212,6 +213,44 @@ impl ListView {
                 LVM_SETITEMSTATE,
                 WPARAM(index as usize),
                 LPARAM(&item as *const _ as isize),
+            );
+        }
+    }
+
+    /// Make every row `height` pixels tall. A list view sizes its rows to
+    /// its small image list, so this sets an empty 1-pixel-wide one; the
+    /// control destroys it with itself.
+    pub fn set_row_height(&self, height: i32) {
+        // SAFETY: a fresh image list handed to the control, which owns it
+        // (the list has no LVS_SHAREIMAGELISTS).
+        unsafe {
+            let images = ImageList_Create(1, height.max(1), ILC_COLOR32, 1, 0);
+            if images.is_invalid() {
+                return;
+            }
+            let previous = SendMessageW(
+                self.hwnd,
+                LVM_SETIMAGELIST,
+                WPARAM(LVSIL_SMALL as usize),
+                LPARAM(images.0 as isize),
+            );
+            if previous.0 != 0 {
+                let _ = windows::Win32::UI::Controls::ImageList_Destroy(
+                    windows::Win32::UI::Controls::HIMAGELIST(previous.0),
+                );
+            }
+        }
+    }
+
+    /// Set column `index`'s width in pixels.
+    pub fn set_column_width(&self, index: usize, width: i32) {
+        // SAFETY: plain message to an owned control.
+        unsafe {
+            SendMessageW(
+                self.hwnd,
+                LVM_SETCOLUMNWIDTH,
+                WPARAM(index),
+                LPARAM(width as isize),
             );
         }
     }
