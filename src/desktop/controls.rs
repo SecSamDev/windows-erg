@@ -2,15 +2,24 @@
 
 use std::ffi::c_void;
 
-use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{CreateFontIndirectW, DeleteObject, HFONT};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    CreateFontIndirectW, CreateSolidBrush, DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE,
+    DT_VCENTER, DeleteObject, DrawTextW, FillRect, GetStockObject, HFONT, NULL_PEN, RoundRect,
+    SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    ICC_BAR_CLASSES, ICC_LISTVIEW_CLASSES, ICC_TAB_CLASSES, INITCOMMONCONTROLSEX,
-    InitCommonControlsEx, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_TEXT, LVM_GETNEXTITEM,
-    LVM_INSERTCOLUMNW, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMCOUNT, LVN_GETDISPINFOW,
-    LVNI_SELECTED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_OWNERDATA, LVS_REPORT,
-    LVS_SHOWSELALWAYS, LVS_SINGLESEL, LVSICF_NOSCROLL, NM_DBLCLK, NMHDR, NMLVDISPINFOW,
+    CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDDS_SUBITEM, CDIS_SELECTED, CDRF_DODEFAULT, CDRF_NEWFONT,
+    CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYSUBITEMDRAW, CDRF_SKIPDEFAULT, ICC_BAR_CLASSES,
+    ICC_LISTVIEW_CLASSES, ICC_TAB_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
+    LIST_VIEW_ITEM_STATE_FLAGS, LVCF_TEXT, LVCF_WIDTH, LVCOLUMNW, LVIF_STATE, LVIF_TEXT,
+    LVIR_BOUNDS, LVIS_FOCUSED, LVIS_SELECTED, LVITEMW, LVM_ENSUREVISIBLE, LVM_GETHEADER,
+    LVM_GETNEXTITEM, LVM_GETSUBITEMRECT, LVM_INSERTCOLUMNW, LVM_SETBKCOLOR,
+    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMCOUNT, LVM_SETITEMSTATE, LVM_SETTEXTBKCOLOR,
+    LVM_SETTEXTCOLOR, LVN_GETDISPINFOW, LVN_ITEMCHANGED, LVNI_SELECTED, LVS_EX_DOUBLEBUFFER,
+    LVS_EX_FULLROWSELECT, LVS_OWNERDATA, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL,
+    LVSICF_NOSCROLL, NM_CUSTOMDRAW, NM_DBLCLK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, NMLVDISPINFOW,
     SB_SETTEXTW, SBARS_SIZEGRIP, STATUSCLASSNAMEW, TCIF_TEXT, TCITEMW, TCM_ADJUSTRECT,
     TCM_GETCURSEL, TCM_GETITEMCOUNT, TCM_INSERTITEMW, TCN_SELCHANGE, WC_LISTVIEWW, WC_TABCONTROLW,
 };
@@ -181,6 +190,92 @@ impl ListView {
         self.handle().invalidate();
     }
 
+    /// Select `row` (and give it the focus mark), or clear the selection
+    /// with `None`.
+    pub fn select(&self, row: Option<usize>) {
+        let mask = LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0);
+        let (index, state) = match row {
+            Some(row) => (row as isize, mask),
+            None => (-1, LIST_VIEW_ITEM_STATE_FLAGS(0)),
+        };
+        let item = LVITEMW {
+            mask: LVIF_STATE,
+            state,
+            stateMask: mask,
+            ..Default::default()
+        };
+        // SAFETY: `item` lives for the synchronous send; -1 means every row.
+        unsafe {
+            SendMessageW(
+                self.hwnd,
+                LVM_SETITEMSTATE,
+                WPARAM(index as usize),
+                LPARAM(&item as *const _ as isize),
+            );
+        }
+    }
+
+    /// Scroll so `row` is visible.
+    pub fn ensure_visible(&self, row: usize) {
+        // SAFETY: plain message; FALSE = the whole row must be visible.
+        unsafe {
+            SendMessageW(self.hwnd, LVM_ENSUREVISIBLE, WPARAM(row), LPARAM(0));
+        }
+    }
+
+    /// The column header control (to theme it).
+    pub fn header(&self) -> WindowHandle {
+        // SAFETY: plain message returning a child handle.
+        let header = unsafe { SendMessageW(self.hwnd, LVM_GETHEADER, WPARAM(0), LPARAM(0)) };
+        WindowHandle::new(header.0 as *mut std::ffi::c_void)
+    }
+
+    /// One cell's rectangle in the list's client pixels.
+    pub fn cell_rect(&self, row: usize, column: usize) -> Option<WindowRect> {
+        let mut rect = RECT {
+            left: LVIR_BOUNDS as i32,
+            top: column as i32,
+            ..Default::default()
+        };
+        // SAFETY: LVM_GETSUBITEMRECT reads `top` (column) and `left` (part),
+        // then fills `rect`.
+        let ok = unsafe {
+            SendMessageW(
+                self.hwnd,
+                LVM_GETSUBITEMRECT,
+                WPARAM(row),
+                LPARAM(&mut rect as *mut _ as isize),
+            )
+        };
+        (ok.0 != 0).then(|| rect.into())
+    }
+
+    /// Text and background colours as `COLORREF`s (`0x00BBGGRR`).
+    pub fn set_colors(&self, text: u32, background: u32) {
+        // SAFETY: plain messages to an owned control.
+        unsafe {
+            SendMessageW(
+                self.hwnd,
+                LVM_SETTEXTCOLOR,
+                WPARAM(0),
+                LPARAM(text as isize),
+            );
+            SendMessageW(
+                self.hwnd,
+                LVM_SETTEXTBKCOLOR,
+                WPARAM(0),
+                LPARAM(background as isize),
+            );
+            SendMessageW(
+                self.hwnd,
+                LVM_SETBKCOLOR,
+                WPARAM(0),
+                LPARAM(background as isize),
+            );
+        }
+        self.handle().invalidate();
+    }
+
     /// The selected row, if any.
     pub fn selected_index(&self) -> Option<usize> {
         // SAFETY: -1 as wparam starts the search before the first item.
@@ -336,6 +431,15 @@ impl StatusBar {
 pub enum ControlNotify<'a> {
     /// A virtual list view needs the text of one cell.
     ListViewGetText(ListViewTextRequest<'a>),
+    /// A list view row is about to be drawn; see [`ListViewCustomDraw`].
+    ListViewCustomDraw(ListViewCustomDraw<'a>),
+    /// A list view row became selected.
+    SelectionChanged {
+        /// Id of the list view.
+        control_id: usize,
+        /// The newly selected row.
+        row: usize,
+    },
     /// The selected tab changed.
     TabChanged {
         /// Id of the tab control.
@@ -382,6 +486,153 @@ impl ListViewTextRequest<'_> {
     }
 }
 
+/// Where a list view is in drawing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrawStage {
+    /// Before the control paints; answer [`ListViewCustomDraw::notify_rows`]
+    /// to get the row stages.
+    PrePaint,
+    /// Before one row.
+    Row,
+    /// Before one cell of a row (after [`ListViewCustomDraw::notify_cells`]).
+    Cell,
+    /// Any other stage.
+    Other,
+}
+
+/// One custom-draw notification from a list view. Answer it with one of
+/// its associated return values from the window handler.
+#[derive(Debug)]
+pub struct ListViewCustomDraw<'a> {
+    /// Id of the list view.
+    pub control_id: usize,
+    raw: &'a mut NMLVCUSTOMDRAW,
+}
+
+impl ListViewCustomDraw<'_> {
+    /// The drawing stage.
+    pub fn stage(&self) -> DrawStage {
+        let stage = self.raw.nmcd.dwDrawStage;
+        if stage == CDDS_PREPAINT {
+            DrawStage::PrePaint
+        } else if stage.0 == CDDS_ITEMPREPAINT.0 | CDDS_SUBITEM.0 {
+            DrawStage::Cell
+        } else if stage == CDDS_ITEMPREPAINT {
+            DrawStage::Row
+        } else {
+            DrawStage::Other
+        }
+    }
+
+    /// The row being drawn.
+    pub fn row(&self) -> usize {
+        self.raw.nmcd.dwItemSpec
+    }
+
+    /// The column being drawn (0 outside the cell stage).
+    pub fn column(&self) -> usize {
+        usize::try_from(self.raw.iSubItem).unwrap_or(0)
+    }
+
+    /// Whether the row is drawn selected.
+    pub fn selected(&self) -> bool {
+        self.raw.nmcd.uItemState.contains(CDIS_SELECTED)
+    }
+
+    /// Text colour for this row or cell (`COLORREF`).
+    pub fn set_text_color(&mut self, color: u32) {
+        self.raw.clrText = COLORREF(color);
+    }
+
+    /// Background colour behind the text of this row or cell (`COLORREF`).
+    pub fn set_background(&mut self, color: u32) {
+        self.raw.clrTextBk = COLORREF(color);
+    }
+
+    /// Paint a rounded "pill" with centred text into `rect` (pixels), using
+    /// the list's current font. Answer [`Self::skip_default`] afterwards so
+    /// the cell's own text is not drawn over it.
+    pub fn paint_pill(&self, rect: WindowRect, fill: u32, text_color: u32, text: &str) {
+        let hdc = self.raw.nmcd.hdc;
+        let mut rc = RECT {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+        };
+        let mut wide: Vec<u16> = text.encode_utf16().collect();
+        let radius = rect.height();
+        // SAFETY: GDI calls on the HDC the control lent for this
+        // notification; every object selected in is selected back out.
+        unsafe {
+            let brush = CreateSolidBrush(COLORREF(fill));
+            let old_brush = SelectObject(hdc, brush);
+            let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
+            let _ = RoundRect(
+                hdc,
+                rc.left,
+                rc.top,
+                rc.right + 1,
+                rc.bottom + 1,
+                radius,
+                radius,
+            );
+            SelectObject(hdc, old_pen);
+            SelectObject(hdc, old_brush);
+            let _ = DeleteObject(brush);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, COLORREF(text_color));
+            DrawTextW(
+                hdc,
+                &mut wide,
+                &mut rc,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS,
+            );
+        }
+    }
+
+    /// Fill `rect` (pixels) with a solid colour.
+    pub fn fill(&self, rect: WindowRect, color: u32) {
+        let rc = RECT {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+        };
+        // SAFETY: GDI calls on the lent HDC; the brush is deleted after use.
+        unsafe {
+            let brush = CreateSolidBrush(COLORREF(color));
+            FillRect(self.raw.nmcd.hdc, &rc, brush);
+            let _ = DeleteObject(brush);
+        }
+    }
+
+    /// Answer for [`DrawStage::PrePaint`]: ask for each row.
+    pub fn notify_rows() -> isize {
+        CDRF_NOTIFYITEMDRAW as isize
+    }
+
+    /// Answer for [`DrawStage::Row`]: ask for each cell of the row.
+    pub fn notify_cells() -> isize {
+        CDRF_NOTIFYSUBITEMDRAW as isize
+    }
+
+    /// Answer after changing colours: draw normally with them.
+    pub fn new_colors() -> isize {
+        CDRF_NEWFONT as isize
+    }
+
+    /// Answer: draw normally.
+    pub fn draw_default() -> isize {
+        CDRF_DODEFAULT as isize
+    }
+
+    /// Answer after painting the cell yourself.
+    pub fn skip_default() -> isize {
+        CDRF_SKIPDEFAULT as isize
+    }
+}
+
 /// Decode a `WM_NOTIFY` message's lparam.
 ///
 /// # Safety
@@ -414,6 +665,27 @@ pub unsafe fn decode_notify<'a>(lparam: isize) -> Option<ControlNotify<'a>> {
                 column: usize::try_from(item.iSubItem).ok()?,
                 buffer,
             })
+        }
+        NM_CUSTOMDRAW => {
+            // SAFETY: a list view's NM_CUSTOMDRAW heads an NMLVCUSTOMDRAW,
+            // writable for the duration of the notification.
+            let raw = unsafe { &mut *(lparam as *mut NMLVCUSTOMDRAW) };
+            ControlNotify::ListViewCustomDraw(ListViewCustomDraw { control_id, raw })
+        }
+        LVN_ITEMCHANGED => {
+            // SAFETY: LVN_ITEMCHANGED's NMHDR heads an NMLISTVIEW.
+            let change = unsafe { &*(lparam as *const NMLISTVIEW) };
+            let selected = LVIS_SELECTED.0;
+            let became_selected = change.uChanged.contains(LVIF_STATE)
+                && change.uNewState & selected != 0
+                && change.uOldState & selected == 0;
+            match usize::try_from(change.iItem) {
+                Ok(row) if became_selected => ControlNotify::SelectionChanged { control_id, row },
+                _ => ControlNotify::Other {
+                    control_id,
+                    code: LVN_ITEMCHANGED,
+                },
+            }
         }
         TCN_SELCHANGE => ControlNotify::TabChanged { control_id },
         NM_DBLCLK => ControlNotify::DoubleClick { control_id },
@@ -486,6 +758,80 @@ mod tests {
         request.set_text("abcdefg");
         assert_eq!(String::from_utf16_lossy(&buffer[..4]), "abcd");
         assert_eq!(buffer[4], 0);
+    }
+
+    #[test]
+    fn custom_draw_stages_and_colours_decode() {
+        use windows::Win32::UI::Controls::NMCUSTOMDRAW;
+
+        let mut raw = NMLVCUSTOMDRAW {
+            nmcd: NMCUSTOMDRAW {
+                hdr: NMHDR {
+                    hwndFrom: HWND::default(),
+                    idFrom: 4,
+                    code: NM_CUSTOMDRAW,
+                },
+                dwDrawStage: CDDS_PREPAINT,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let decode = |raw: &mut NMLVCUSTOMDRAW| {
+            // SAFETY: `raw` is a well-formed notification that outlives the decode.
+            match unsafe { decode_notify(raw as *mut _ as isize) } {
+                Some(ControlNotify::ListViewCustomDraw(draw)) => {
+                    (draw.stage(), draw.row(), draw.column())
+                }
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(decode(&mut raw).0, DrawStage::PrePaint);
+
+        raw.nmcd.dwDrawStage = CDDS_ITEMPREPAINT;
+        raw.nmcd.dwItemSpec = 9;
+        assert_eq!(decode(&mut raw), (DrawStage::Row, 9, 0));
+
+        raw.nmcd.dwDrawStage.0 |= CDDS_SUBITEM.0;
+        raw.iSubItem = 2;
+        assert_eq!(decode(&mut raw), (DrawStage::Cell, 9, 2));
+
+        // SAFETY: as above.
+        if let Some(ControlNotify::ListViewCustomDraw(mut draw)) =
+            unsafe { decode_notify(&mut raw as *mut _ as isize) }
+        {
+            draw.set_text_color(0x0000_00FF);
+        }
+        assert_eq!(raw.clrText.0, 0x0000_00FF);
+    }
+
+    #[test]
+    fn only_a_newly_selected_row_is_a_selection_change() {
+        let mut change = NMLISTVIEW {
+            hdr: NMHDR {
+                hwndFrom: HWND::default(),
+                idFrom: 5,
+                code: LVN_ITEMCHANGED,
+            },
+            iItem: 3,
+            uChanged: LVIF_STATE,
+            uNewState: LVIS_SELECTED.0,
+            uOldState: 0,
+            ..Default::default()
+        };
+        // SAFETY: `change` is a well-formed notification that outlives the decode.
+        let notify = unsafe { decode_notify(&mut change as *mut _ as isize) };
+        assert!(matches!(
+            notify,
+            Some(ControlNotify::SelectionChanged {
+                control_id: 5,
+                row: 3
+            })
+        ));
+
+        change.uOldState = LVIS_SELECTED.0;
+        // SAFETY: as above.
+        let notify = unsafe { decode_notify(&mut change as *mut _ as isize) };
+        assert!(matches!(notify, Some(ControlNotify::Other { .. })));
     }
 
     #[test]

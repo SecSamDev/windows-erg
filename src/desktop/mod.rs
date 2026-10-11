@@ -7,33 +7,43 @@
 //!   click callbacks
 //! - Window classes and windows bound to a [`WindowHandler`], message posting
 //!   from other threads, and the message loop
-//! - Common controls (virtual list view, tab strip, status bar), popup
-//!   menus, per-monitor DPI and a single-instance guard
+//! - Common controls (virtual list view with custom draw, tab strip, status
+//!   bar), popup menus, per-monitor DPI and a single-instance guard
+//! - Direct2D/DirectWrite drawing ([`Canvas`]), light/dark theming and the
+//!   clipboard
 
+mod canvas;
+pub mod clipboard;
 mod controls;
 mod dpi;
 mod instance;
 mod menu;
 pub mod msg;
+mod theme;
 mod tray;
 mod types;
 mod window;
 mod windows;
 
+pub use canvas::{Align, Canvas, Color, Frame, RectF, TextStyle, Weight};
 pub use controls::{
-    ControlNotify, GuiFont, ListView, ListViewTextRequest, StatusBar, TabControl, decode_notify,
-    init_common_controls,
+    ControlNotify, DrawStage, GuiFont, ListView, ListViewCustomDraw, ListViewTextRequest,
+    StatusBar, TabControl, decode_notify, init_common_controls,
 };
 pub use dpi::{
     DEFAULT_DPI, dpi_for_window, scale, set_process_dpi_aware_per_monitor_v2, suggested_rect,
 };
 pub use instance::SingleInstance;
 pub use menu::PopupMenu;
+pub use theme::{
+    Backdrop, ControlTheme, allow_dark_menus, is_theme_change, set_backdrop, set_control_theme,
+    set_dark_title_bar, system_prefers_dark,
+};
 pub use tray::{TrayEvent, TrayIcon, TrayIconBuilder, TrayNotification, taskbar_created_message};
 pub use types::{BalloonIcon, CloakState, TrayIconId, WindowHandle, WindowInfo, WindowRect};
 pub use window::{
-    MessagePoster, Window, WindowBuilder, WindowClass, WindowClassBuilder, WindowHandler,
-    post_quit, run_message_loop,
+    MessagePoster, PaintGuard, Window, WindowBuilder, WindowClass, WindowClassBuilder,
+    WindowHandler, ctrl_down, mouse_position, post_quit, run_message_loop,
 };
 
 use crate::Result;

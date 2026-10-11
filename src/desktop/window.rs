@@ -5,16 +5,22 @@ use std::ffi::c_void;
 use windows::Win32::Foundation::{
     ERROR_CLASS_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM,
 };
-use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, HBRUSH, InvalidateRect};
+use windows::Win32::Graphics::Gdi::{
+    BeginPaint, COLOR_WINDOW, EndPaint, HBRUSH, InvalidateRect, PAINTSTRUCT,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, SetFocus, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VK_CONTROL,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CREATESTRUCTW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-    GWLP_USERDATA, GetClientRect, GetMessageW, GetWindowLongPtrW, GetWindowRect, HICON,
-    HWND_MESSAGE, IDC_ARROW, IMAGE_ICON, IsDialogMessageW, IsWindow, IsWindowVisible,
+    GWLP_USERDATA, GetClientRect, GetMessageW, GetWindowLongPtrW, GetWindowRect, HICON, HMENU,
+    HWND_MESSAGE, IDC_ARROW, IMAGE_ICON, IsDialogMessageW, IsWindow, IsWindowVisible, KillTimer,
     LR_DEFAULTSIZE, LR_SHARED, LoadCursorW, LoadImageW, MSG, MoveWindow, PostMessageW,
-    PostQuitMessage, RegisterClassExW, SW_HIDE, SW_RESTORE, SW_SHOW, SetForegroundWindow,
+    PostQuitMessage, RegisterClassExW, SW_HIDE, SW_RESTORE, SW_SHOW, SetForegroundWindow, SetTimer,
     SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_NCCREATE, WM_NCDESTROY, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    WM_NCCREATE, WM_NCDESTROY, WNDCLASSEXW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+    WS_OVERLAPPEDWINDOW,
 };
 use windows::core::PCWSTR;
 
@@ -113,6 +119,7 @@ pub struct WindowBuilder<'a> {
     title: String,
     size: Option<(i32, i32)>,
     message_only: bool,
+    child: Option<(WindowHandle, u16)>,
 }
 
 impl<'a> WindowBuilder<'a> {
@@ -123,6 +130,7 @@ impl<'a> WindowBuilder<'a> {
             title: String::new(),
             size: None,
             message_only: false,
+            child: None,
         }
     }
 
@@ -144,16 +152,41 @@ impl<'a> WindowBuilder<'a> {
         self
     }
 
+    /// Create a child window of `parent` with the control `id`, for a
+    /// custom-drawn area. It starts hidden; size it with
+    /// [`WindowHandle::set_bounds`].
+    pub fn child_of(mut self, parent: WindowHandle, id: u16) -> Self {
+        self.child = Some((parent, id));
+        self
+    }
+
     /// Create the window, hidden. `handler` receives every message from
     /// `WM_NCCREATE` on and is dropped after `WM_NCDESTROY`.
     pub fn create(self, handler: Box<dyn WindowHandler>) -> Result<Window> {
         let instance = module_instance("CreateWindowExW")?;
         let title = to_utf16_nul(&self.title);
-        let (width, height) = self.size.unwrap_or((CW_USEDEFAULT, CW_USEDEFAULT));
-        let (style, parent) = if self.message_only {
-            (WINDOW_STYLE(0), HWND_MESSAGE)
+        let (style, parent, menu) = match (self.child, self.message_only) {
+            (Some((parent, id)), _) => (
+                WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+                HWND::from(parent),
+                HMENU(usize::from(id) as *mut c_void),
+            ),
+            (None, true) => (WINDOW_STYLE(0), HWND_MESSAGE, HMENU::default()),
+            (None, false) => (
+                WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+                HWND::default(),
+                HMENU::default(),
+            ),
+        };
+        let (x, y) = if self.child.is_some() {
+            (0, 0)
         } else {
-            (WS_OVERLAPPEDWINDOW, HWND::default())
+            (CW_USEDEFAULT, CW_USEDEFAULT)
+        };
+        let (width, height) = match (self.child, self.size) {
+            (_, Some(size)) => size,
+            (Some(_), None) => (0, 0),
+            (None, None) => (CW_USEDEFAULT, CW_USEDEFAULT),
         };
 
         // Double-boxed so the window procedure gets a thin pointer back.
@@ -168,12 +201,12 @@ impl<'a> WindowBuilder<'a> {
                 PCWSTR(self.class.name.as_ptr()),
                 PCWSTR(title.as_ptr()),
                 style,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
+                x,
+                y,
                 width,
                 height,
                 parent,
-                None,
+                menu,
                 instance,
                 Some(slot as *const c_void),
             )
@@ -329,6 +362,78 @@ impl MessagePoster {
             )
         }
         .map_err(|e| op_error("PostMessageW", "window", e.code().0))
+    }
+}
+
+/// Brackets the handling of `WM_PAINT` (`BeginPaint`/`EndPaint`). Draw
+/// while it lives; dropping it validates the window.
+pub struct PaintGuard {
+    hwnd: HWND,
+    paint: PAINTSTRUCT,
+}
+
+impl PaintGuard {
+    /// Begin painting `window`. Call only for its `WM_PAINT`.
+    pub fn begin(window: WindowHandle) -> Self {
+        let hwnd = HWND::from(window);
+        let mut paint = PAINTSTRUCT::default();
+        // SAFETY: `paint` is a valid out pointer; EndPaint runs on drop.
+        unsafe { BeginPaint(hwnd, &mut paint) };
+        Self { hwnd, paint }
+    }
+}
+
+impl Drop for PaintGuard {
+    fn drop(&mut self) {
+        // SAFETY: pairs the BeginPaint above with its own PAINTSTRUCT.
+        unsafe {
+            let _ = EndPaint(self.hwnd, &self.paint);
+        }
+    }
+}
+
+/// The client position packed in a mouse message's lparam, in pixels.
+pub fn mouse_position(lparam: isize) -> (i32, i32) {
+    let x = (lparam & 0xFFFF) as u16 as i16;
+    let y = ((lparam >> 16) & 0xFFFF) as u16 as i16;
+    (i32::from(x), i32::from(y))
+}
+
+/// Whether a Ctrl key is held (for keyboard shortcuts in `WM_KEYDOWN`).
+pub fn ctrl_down() -> bool {
+    // SAFETY: reads the calling thread's keyboard state.
+    unsafe { GetKeyState(i32::from(VK_CONTROL.0)) < 0 }
+}
+
+impl WindowHandle {
+    /// Ask for one `WM_MOUSELEAVE` when the cursor next leaves the window.
+    pub fn track_mouse_leave(self) {
+        let mut track = TRACKMOUSEEVENT {
+            cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+            dwFlags: TME_LEAVE,
+            hwndTrack: HWND::from(self),
+            dwHoverTime: 0,
+        };
+        // SAFETY: `track` is valid and sized.
+        let _ = unsafe { TrackMouseEvent(&mut track) };
+    }
+
+    /// Start (or restart) timer `id`, delivering `WM_TIMER` every `millis`.
+    pub fn set_timer(self, id: usize, millis: u32) {
+        // SAFETY: a window timer without a callback procedure.
+        unsafe { SetTimer(HWND::from(self), id, millis, None) };
+    }
+
+    /// Stop timer `id`.
+    pub fn kill_timer(self, id: usize) {
+        // SAFETY: stops a timer of this window; a missing one is not an error.
+        let _ = unsafe { KillTimer(HWND::from(self), id) };
+    }
+
+    /// Give the window the keyboard focus.
+    pub fn focus(self) {
+        // SAFETY: SetFocus validates the handle.
+        let _ = unsafe { SetFocus(HWND::from(self)) };
     }
 }
 
