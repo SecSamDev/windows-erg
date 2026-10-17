@@ -84,25 +84,52 @@ fn map_tcp(opcode: u8, fields: &[EventField]) -> TcpEvent {
     }
 }
 
+/// Classic Registry opcodes (`Registry_TypeGroup1`), checked against a live
+/// session with `examples/etw_registry_probe.rs`: 22/23 carry a full path
+/// and are KCB lifetime events, 25 is what a requested rundown emits, and 27
+/// is Close. None of 23..=27 is a key operation.
 fn map_registry(opcode: u8, fields: &[EventField]) -> RegistryEvent {
+    let operation = match opcode {
+        10 => RegistryOperation::Create,
+        11 => RegistryOperation::Open,
+        12 => RegistryOperation::DeleteKey,
+        13 => RegistryOperation::QueryKey,
+        14 => RegistryOperation::SetValue,
+        15 => RegistryOperation::DeleteValue,
+        16 | 19 => RegistryOperation::QueryValue,
+        17 => RegistryOperation::EnumerateKey,
+        18 => RegistryOperation::EnumerateValue,
+        20 => RegistryOperation::SetInformation,
+        21 => RegistryOperation::Flush,
+        22 => RegistryOperation::KcbCreate,
+        23 => RegistryOperation::KcbDelete,
+        24 => RegistryOperation::KcbRundownBegin,
+        25 => RegistryOperation::KcbRundownEnd,
+        26 => RegistryOperation::Virtualize,
+        27 => RegistryOperation::Close,
+        28 => RegistryOperation::SetSecurity,
+        29 => RegistryOperation::QuerySecurity,
+        _ => RegistryOperation::Unknown,
+    };
+    let name = field_string(fields, &["KeyName", "registry_key_name"]);
+    let value_name = field_string(fields, &["ValueName", "registry_value_name"]);
+    // A classic value event has no ValueName field: its KeyName is the value.
+    let names_a_value = matches!(
+        operation,
+        RegistryOperation::SetValue
+            | RegistryOperation::DeleteValue
+            | RegistryOperation::QueryValue
+    );
+    let (key_name, value_name) = match (names_a_value, value_name) {
+        (true, None) => (None, name),
+        (_, value_name) => (name, value_name),
+    };
     RegistryEvent {
-        operation: match opcode {
-            10 => RegistryOperation::Create,
-            11 | 27 => RegistryOperation::Open,
-            12 | 23 => RegistryOperation::DeleteKey,
-            13 => RegistryOperation::QueryKey,
-            14 => RegistryOperation::SetValue,
-            15 => RegistryOperation::DeleteValue,
-            16 | 19 => RegistryOperation::QueryValue,
-            17 | 24 | 25 => RegistryOperation::EnumerateKey,
-            18 => RegistryOperation::EnumerateValue,
-            20 => RegistryOperation::SetInformation,
-            _ => RegistryOperation::Unknown,
-        },
+        operation,
         process_id: field_process_id(fields, &["PID", "ProcessId"]),
-        key_name: field_string(fields, &["KeyName", "registry_key_name"]),
+        key_name,
         relative_name: field_string(fields, &["RelativeName", "registry_relative_name"]),
-        value_name: field_string(fields, &["ValueName", "registry_value_name"]),
+        value_name,
         status: field_u32(fields, &["Status", "status"]),
         key_handle: field_u64(fields, &["KeyHandle", "registry_key_handle"]),
     }
@@ -362,10 +389,48 @@ mod tests {
             u32f("status", 0),
         ];
 
-        let event = map_registry(27, &fields);
+        let event = map_registry(11, &fields);
         assert_eq!(event.operation, RegistryOperation::Open);
         assert_eq!(event.process_id, Some(ProcessId::new(200)));
         assert_eq!(event.value_name.as_deref(), Some("Run"));
+    }
+
+    #[test]
+    fn map_registry_kcb_and_close_opcodes_are_not_key_operations() {
+        let fields = vec![s("KeyName", "\\REGISTRY\\MACHINE\\SOFTWARE")];
+        for (opcode, op) in [
+            (21, RegistryOperation::Flush),
+            (22, RegistryOperation::KcbCreate),
+            (23, RegistryOperation::KcbDelete),
+            (24, RegistryOperation::KcbRundownBegin),
+            (25, RegistryOperation::KcbRundownEnd),
+            (26, RegistryOperation::Virtualize),
+            (27, RegistryOperation::Close),
+            (28, RegistryOperation::SetSecurity),
+            (29, RegistryOperation::QuerySecurity),
+        ] {
+            let event = map_registry(opcode, &fields);
+            assert_eq!(event.operation, op, "opcode {opcode}");
+            assert_eq!(
+                event.key_name.as_deref(),
+                Some("\\REGISTRY\\MACHINE\\SOFTWARE")
+            );
+        }
+    }
+
+    #[test]
+    fn map_registry_value_events_carry_the_value_name() {
+        // The classic SetValue/DeleteValue name field is the value's name.
+        let fields = vec![s("KeyName", "probe")];
+        for opcode in [14, 15, 16] {
+            let event = map_registry(opcode, &fields);
+            assert_eq!(event.key_name, None, "opcode {opcode}");
+            assert_eq!(event.value_name.as_deref(), Some("probe"));
+        }
+        // A key operation keeps it as the relative key name.
+        let event = map_registry(10, &[s("KeyName", "Software\\Vendor")]);
+        assert_eq!(event.key_name.as_deref(), Some("Software\\Vendor"));
+        assert_eq!(event.value_name, None);
     }
 
     #[test]

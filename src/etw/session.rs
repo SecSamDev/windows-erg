@@ -350,6 +350,11 @@ pub struct EventTrace {
     /// `true` if `start()` had to stop and replace a leftover session with the
     /// same name before it could start (see [`Self::replaced_existing_session`]).
     replaced_existing_session: bool,
+
+    /// The `EVENT_TRACE_FLAG` bits this session was started with; `0` for a
+    /// user-mode session. [`request_rundown`][Self::request_rundown] restores
+    /// them.
+    enable_flags: u32,
 }
 
 impl EventTrace {
@@ -417,6 +422,61 @@ impl EventTrace {
     /// of it) created, never an unrelated tool's `NT Kernel Logger`.
     pub fn replaced_existing_session(&self) -> bool {
         self.replaced_existing_session
+    }
+
+    /// Ask the kernel to replay the state of a kernel session's system
+    /// providers: KCB rundown events (Registry opcode 22/24/25) for every
+    /// cached registry key, file-object rundowns for open files, and the
+    /// like.
+    ///
+    /// It clears the session's system enable flags and sets them again
+    /// (`TraceSetInformation` with `TraceSystemTraceEnableFlagsInfo`); the
+    /// re-enable is what makes the kernel emit the rundown. Call it after
+    /// [`start`][EventTraceBuilder::start], so the consumer is already
+    /// attached. Events the session would deliver between the two calls
+    /// are lost.
+    ///
+    /// # Errors
+    ///
+    /// [`EtwError::SessionStartFailed`] for a user-mode session (there is
+    /// nothing to replay), or with the OS error code if either call fails.
+    pub fn request_rundown(&self) -> Result<()> {
+        if self.enable_flags == 0 {
+            return Err(Error::Etw(EtwError::SessionStartFailed(
+                EtwSessionError::new(
+                    Cow::Owned(self.name.clone()),
+                    Cow::Borrowed("A rundown needs a kernel session with system providers"),
+                ),
+            )));
+        }
+        // The group mask is 8 u32s; the first one holds the classic
+        // EVENT_TRACE_FLAG bits.
+        let mut mask = [0u32; 8];
+        for flags in [0, self.enable_flags] {
+            mask[0] = flags;
+            // SAFETY: `mask` lives across the call and the length passed is
+            // its exact size; `session_handle` is this session's own handle.
+            let status = unsafe {
+                TraceSetInformation(
+                    self.session_handle,
+                    TraceSystemTraceEnableFlagsInfo,
+                    mask.as_ptr().cast(),
+                    std::mem::size_of_val(&mask) as u32,
+                )
+            };
+            if status != ERROR_SUCCESS {
+                return Err(Error::Etw(EtwError::SessionStartFailed(
+                    EtwSessionError::with_code(
+                        Cow::Owned(self.name.clone()),
+                        Cow::Borrowed(
+                            "TraceSetInformation(TraceSystemTraceEnableFlagsInfo) failed",
+                        ),
+                        status.0 as i32,
+                    ),
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// `true` while the `ProcessTrace` background thread is still running.
@@ -1271,6 +1331,7 @@ impl EventTraceBuilder {
             stop_signal: Wait::manual_reset(false)?,
             callback_ctx_guard,
             replaced_existing_session,
+            enable_flags,
         })
     }
 }
@@ -1319,6 +1380,7 @@ mod tests {
                 dropped: AtomicU64::new(0),
             }),
             replaced_existing_session: false,
+            enable_flags: 0,
         }
     }
 
