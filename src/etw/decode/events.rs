@@ -121,14 +121,46 @@ pub enum RegistryOperation {
     EnumerateValue,
     /// Set key information metadata.
     SetInformation,
+    /// Flush a key to its hive (opcode 21).
+    Flush,
+    /// The kernel created a key control block (opcode 22). `key_handle` is
+    /// the new KCB and `key_name` its full native path
+    /// (`\REGISTRY\MACHINE\…`, upper case).
+    KcbCreate,
+    /// The kernel freed a key control block (opcode 23). Not a key delete.
+    KcbDelete,
+    /// KCB rundown, begin (opcode 24): a cached KCB and its full path.
+    KcbRundownBegin,
+    /// KCB rundown, end (opcode 25): a cached KCB and its full path. This is
+    /// the one a rundown requested with `EventTrace::request_rundown` emits.
+    KcbRundownEnd,
+    /// Registry virtualization redirected the operation (opcode 26).
+    Virtualize,
+    /// Close a key handle (opcode 27).
+    Close,
+    /// Set a key's security descriptor (opcode 28).
+    SetSecurity,
+    /// Query a key's security descriptor (opcode 29).
+    QuerySecurity,
     /// Opcode did not match a known registry operation.
     Unknown,
 }
 
 /// Typed representation of a decoded Registry event.
+///
+/// Classic kernel Registry events name a key relative to a key control
+/// block: `key_handle` is that KCB, and `key_name` the rest of the path
+/// (empty when the operation is on the KCB's own key). A consumer joins the
+/// two through a KCB → path map fed by the `Kcb*` operations. For a value
+/// operation (`SetValue`, `DeleteValue`, `QueryValue`) the classic event's
+/// name field is the *value* name, so it lands in `value_name` and
+/// `key_name` is `None`.
 #[derive(Debug, Clone)]
 pub struct RegistryEvent {
     pub operation: RegistryOperation,
+    /// From a `PID`/`ProcessId` field. Classic Registry events have none:
+    /// use the event header's PID (measured correct with
+    /// `etw_registry_probe`).
     pub process_id: Option<ProcessId>,
     pub key_name: Option<String>,
     pub relative_name: Option<String>,

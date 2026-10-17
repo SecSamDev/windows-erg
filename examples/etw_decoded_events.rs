@@ -8,9 +8,7 @@
 //! Run as Administrator:
 //! `cargo run --example etw_decoded_events`
 
-use windows_erg::etw::{
-    DecodedEvent, EventTrace, FileIoOperation, RegistryOperation, SystemProvider, TcpOperation,
-};
+use windows_erg::etw::{DecodedEvent, EventTrace, FileIoOperation, SystemProvider, TcpOperation};
 
 fn main() -> windows_erg::Result<()> {
     println!("Starting ETW decoded events monitor...");
@@ -108,19 +106,7 @@ fn main() -> windows_erg::Result<()> {
                     );
                 }
                 DecodedEvent::Registry(r) => {
-                    let op = match r.operation {
-                        RegistryOperation::Create => "Create",
-                        RegistryOperation::Open => "Open",
-                        RegistryOperation::DeleteKey => "DeleteKey",
-                        RegistryOperation::QueryKey => "QueryKey",
-                        RegistryOperation::SetValue => "SetValue",
-                        RegistryOperation::DeleteValue => "DeleteValue",
-                        RegistryOperation::QueryValue => "QueryValue",
-                        RegistryOperation::EnumerateKey => "EnumerateKey",
-                        RegistryOperation::EnumerateValue => "EnumerateValue",
-                        RegistryOperation::SetInformation => "SetInformation",
-                        RegistryOperation::Unknown => "Unknown",
-                    };
+                    let op = format!("{:?}", r.operation);
                     println!(
                         "[{}] Registry{} pid={:?} key={:?} value={:?} status={:?}",
                         processed, op, r.process_id, r.key_name, r.value_name, r.status
