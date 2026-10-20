@@ -222,7 +222,7 @@ fn take_optional_pwstr(pwstr: PWSTR) -> Result<Option<String>> {
     let value = String::from_utf16_lossy(data);
 
     unsafe {
-        GlobalFree(HGLOBAL(pwstr.0 as _)).map_err(|err| {
+        GlobalFree(Some(HGLOBAL(pwstr.0 as _))).map_err(|err| {
             Error::WindowsApi(WindowsApiError::with_context(err, "GlobalFree(PWSTR)"))
         })?;
     }

@@ -1,6 +1,6 @@
 [package]
 name = "windows-erg"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.90"
 authors = ["Samuel Garces <samuel.garces@protonmail.com>"]
@@ -19,7 +19,7 @@ targets = ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]
 
 [dependencies]
 # Core Windows API bindings
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     # Kernel32 - Core system functions
     "Win32_System_Threading",
     "Win32_System_Diagnostics_Debug",
@@ -89,6 +89,8 @@ windows = { version = "0.58", features = [
     # Other
     "Win32_System_Com",
 ] }
+# Direct2D point/vector types (`Vector2`), which `windows` uses but does not re-export
+windows-numerics = "0.3"
 
 # XML parsing for Event Log
 quick-xml = { version = "0.39", features = ["serialize"] }

@@ -86,14 +86,12 @@ pub struct EventProvider {
 impl EventProvider {
     /// Register `provider` for writing.
     pub fn register(provider: &GUID) -> Result<Self> {
-        let mut handle = 0u64;
+        let mut handle = REGHANDLE::default();
         // SAFETY: `provider` is a valid GUID for the call; no enable
         // callback; `handle` receives the registration handle.
         let status = unsafe { EventRegister(provider, None, None, &mut handle) };
         win32(status, "EventRegister")?;
-        Ok(Self {
-            handle: REGHANDLE(handle as i64),
-        })
+        Ok(Self { handle })
     }
 
     /// Write one event. A provider nobody listens to accepts the event and

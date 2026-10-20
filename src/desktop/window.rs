@@ -205,9 +205,9 @@ impl<'a> WindowBuilder<'a> {
                 y,
                 width,
                 height,
-                parent,
-                menu,
-                instance,
+                Some(parent),
+                Some(menu),
+                Some(instance.into()),
                 Some(slot as *const c_void),
             )
         };
@@ -239,7 +239,7 @@ impl Drop for Window {
         // window that still exists, from the thread that owns `Window`
         // (`Window` is neither Send nor Sync).
         unsafe {
-            if IsWindow(self.hwnd).as_bool() {
+            if IsWindow(Some(self.hwnd)).as_bool() {
                 let _ = DestroyWindow(self.hwnd);
             }
         }
@@ -324,7 +324,7 @@ impl WindowHandle {
     pub fn invalidate(self) {
         // SAFETY: InvalidateRect validates the handle; `None` means the whole area.
         unsafe {
-            let _ = InvalidateRect(HWND::from(self), None, false);
+            let _ = InvalidateRect(Some(HWND::from(self)), None, false);
         }
     }
 
@@ -355,7 +355,7 @@ impl MessagePoster {
         // SAFETY: PostMessageW validates the handle; it is safe from any thread.
         unsafe {
             PostMessageW(
-                HWND(self.hwnd as *mut c_void),
+                Some(HWND(self.hwnd as *mut c_void)),
                 msg,
                 WPARAM(wparam),
                 LPARAM(lparam),
@@ -421,19 +421,19 @@ impl WindowHandle {
     /// Start (or restart) timer `id`, delivering `WM_TIMER` every `millis`.
     pub fn set_timer(self, id: usize, millis: u32) {
         // SAFETY: a window timer without a callback procedure.
-        unsafe { SetTimer(HWND::from(self), id, millis, None) };
+        unsafe { SetTimer(Some(HWND::from(self)), id, millis, None) };
     }
 
     /// Stop timer `id`.
     pub fn kill_timer(self, id: usize) {
         // SAFETY: stops a timer of this window; a missing one is not an error.
-        let _ = unsafe { KillTimer(HWND::from(self), id) };
+        let _ = unsafe { KillTimer(Some(HWND::from(self)), id) };
     }
 
     /// Give the window the keyboard focus.
     pub fn focus(self) {
         // SAFETY: SetFocus validates the handle.
-        let _ = unsafe { SetFocus(HWND::from(self)) };
+        let _ = unsafe { SetFocus(Some(HWND::from(self))) };
     }
 }
 
@@ -486,7 +486,7 @@ pub(crate) fn load_icon_resource(id: u16, size: i32) -> Result<HICON> {
     // only reads the module's resource table.
     let handle = unsafe {
         LoadImageW(
-            instance,
+            Some(instance.into()),
             PCWSTR(id as usize as *const u16),
             IMAGE_ICON,
             size,

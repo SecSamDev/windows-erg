@@ -90,6 +90,45 @@ jobs:
         run: cargo build --examples --features full --target aarch64-pc-windows-msvc
 
   # ──────────────────────────────────────────────
+  # Job 1c: 32-bit x86 lint + lib tests
+  # i686-pc-windows-msvc binaries run natively on the
+  # x64 runner (WoW64), so lib tests execute too. Catches
+  # pointer-width and packed-struct differences (e.g.
+  # SetWindowLongPtrW, NOTIFYICONDATAW, ETW payloads).
+  # ──────────────────────────────────────────────
+  i686-check:
+    name: x86 (i686) Lint & Lib Tests
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-i686-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-i686-
+
+      - name: cargo clippy (default features, i686 target)
+        run: cargo clippy --all-targets --target i686-pc-windows-msvc -- -D warnings
+
+      - name: cargo clippy (all features, i686 target)
+        run: cargo clippy --all-targets --features full --target i686-pc-windows-msvc -- -D warnings
+
+      - name: cargo test --lib (all features, i686 target)
+        run: cargo test --lib --features full --target i686-pc-windows-msvc
+
+  # ──────────────────────────────────────────────
   # Job 2: Unit + integration tests (non-admin)
   # Runs all lib tests and integration tests that
   # do not require elevated privileges.

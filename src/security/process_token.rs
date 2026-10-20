@@ -1,7 +1,7 @@
 //! Process access-token queries: elevation, mandatory integrity level, and
 //! `BUILTIN\Administrators` membership.
 
-use windows::Win32::Foundation::{BOOL, HANDLE};
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Security::GetTokenInformation;
 use windows::Win32::Security::{
     CheckTokenMembership, CreateWellKnownSid, DuplicateToken, GetLengthSid, GetSidSubAuthority,
@@ -14,6 +14,7 @@ use windows::Win32::System::SystemServices::{
     SECURITY_MANDATORY_SYSTEM_RID,
 };
 use windows::Win32::System::Threading::OpenProcessToken;
+use windows::core::BOOL;
 
 use crate::error::{Error, InvalidParameterError, Result, WindowsApiError};
 use crate::process::Process;
@@ -193,8 +194,8 @@ impl ProcessToken {
         unsafe {
             CreateWellKnownSid(
                 WinBuiltinAdministratorsSid,
-                PSID::default(),
-                sid_ptr,
+                None,
+                Some(sid_ptr),
                 &mut sid_len,
             )
         }
@@ -203,7 +204,7 @@ impl ProcessToken {
         let mut member = BOOL(0);
         // SAFETY: `impersonation` is a valid impersonation-type token;
         // `sid_ptr` points at a valid SID.
-        unsafe { CheckTokenMembership(impersonation.raw(), sid_ptr, &mut member) }
+        unsafe { CheckTokenMembership(Some(impersonation.raw()), sid_ptr, &mut member) }
             .map_err(context("CheckTokenMembership"))?;
         Ok(member.as_bool())
     }

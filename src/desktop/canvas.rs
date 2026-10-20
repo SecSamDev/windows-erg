@@ -6,10 +6,9 @@
 
 use std::cell::RefCell;
 
-use windows::Win32::Foundation::BOOL;
 use windows::Win32::Foundation::{D2DERR_RECREATE_TARGET, HWND, RECT};
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D_POINT_2F, D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE_UNKNOWN, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
+    D2D_RECT_F, D2D_SIZE_U, D2D1_ALPHA_MODE_UNKNOWN, D2D1_COLOR_F, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
     D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_ELLIPSE,
@@ -30,7 +29,9 @@ use windows::Win32::Graphics::DirectWrite::{
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_UNKNOWN;
 use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+use windows::core::BOOL;
 use windows::core::PCWSTR;
+use windows_numerics::Vector2;
 
 use crate::Result;
 use crate::utils::to_utf16_nul;
@@ -317,7 +318,7 @@ impl TextStyle {
 fn first_installed(dwrite: &IDWriteFactory, families: &[&str]) -> Option<String> {
     let mut collection = None;
     // SAFETY: `collection` is a valid out pointer.
-    unsafe { dwrite.GetSystemFontCollection(&mut collection, BOOL::from(false)) }.ok()?;
+    unsafe { dwrite.GetSystemFontCollection(&mut collection, false) }.ok()?;
     let collection = collection?;
     families.iter().find_map(|family| {
         let wide = to_utf16_nul(family);
@@ -541,7 +542,7 @@ impl Frame<'_> {
     /// Fill a circle.
     pub fn fill_circle(&self, cx: f32, cy: f32, radius: f32, color: Color) {
         let ellipse = D2D1_ELLIPSE {
-            point: D2D_POINT_2F { x: cx, y: cy },
+            point: Vector2 { X: cx, Y: cy },
             radiusX: radius,
             radiusY: radius,
         };
@@ -554,11 +555,11 @@ impl Frame<'_> {
         // SAFETY: inside BeginDraw/EndDraw; no stroke style.
         unsafe {
             self.target.DrawLine(
-                D2D_POINT_2F {
-                    x: from.0,
-                    y: from.1,
+                Vector2 {
+                    X: from.0,
+                    Y: from.1,
                 },
-                D2D_POINT_2F { x: to.0, y: to.1 },
+                Vector2 { X: to.0, Y: to.1 },
                 self.with(color),
                 width,
                 None,

@@ -148,9 +148,9 @@ impl Process {
 
         for &hmodule in module_handles {
             // Get module name
-            let name_len =
-                unsafe { GetModuleBaseNameW(self.as_raw_handle(), hmodule, string_buffer_slice) }
-                    as usize;
+            let name_len = unsafe {
+                GetModuleBaseNameW(self.as_raw_handle(), Some(hmodule), string_buffer_slice)
+            } as usize;
 
             let name = if name_len > 0 {
                 String::from_utf16_lossy(&string_buffer_slice[..name_len])
@@ -159,9 +159,13 @@ impl Process {
             };
 
             // Get full path (reuse same buffer)
-            let path_len =
-                unsafe { GetModuleFileNameExW(self.as_raw_handle(), hmodule, string_buffer_slice) }
-                    as usize;
+            let path_len = unsafe {
+                GetModuleFileNameExW(
+                    Some(self.as_raw_handle()),
+                    Some(hmodule),
+                    string_buffer_slice,
+                )
+            } as usize;
 
             let path = if path_len > 0 {
                 // Use from_utf16 for efficient cache lookup without intermediate String

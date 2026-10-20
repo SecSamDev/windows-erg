@@ -565,13 +565,14 @@ impl NamedPipeServer {
     /// Windows only allows impersonation after data has been read from the
     /// pipe, so call this after the client's first message.
     pub fn client_is_elevated_admin(&self) -> Result<bool> {
-        use windows::Win32::Foundation::{BOOL, HANDLE};
+        use windows::Win32::Foundation::HANDLE;
         use windows::Win32::Security::{
             CheckTokenMembership, CreateWellKnownSid, PSID, SECURITY_MAX_SID_SIZE, TOKEN_QUERY,
             WinBuiltinAdministratorsSid,
         };
         use windows::Win32::System::Pipes::ImpersonateNamedPipeClient;
         use windows::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
+        use windows::core::BOOL;
 
         let context = |api: &'static str| {
             move |e: windows::core::Error| {
@@ -598,8 +599,8 @@ impl NamedPipeServer {
         unsafe {
             CreateWellKnownSid(
                 WinBuiltinAdministratorsSid,
-                PSID::default(),
-                sid_ptr,
+                None,
+                Some(sid_ptr),
                 &mut sid_len,
             )
         }
@@ -608,7 +609,7 @@ impl NamedPipeServer {
         let mut member = BOOL(0);
         // SAFETY: `token` is an impersonation token opened with TOKEN_QUERY and
         // `sid_ptr` points at a valid SID.
-        unsafe { CheckTokenMembership(token.raw(), sid_ptr, &mut member) }
+        unsafe { CheckTokenMembership(Some(token.raw()), sid_ptr, &mut member) }
             .map_err(context("CheckTokenMembership"))?;
         Ok(member.as_bool())
     }

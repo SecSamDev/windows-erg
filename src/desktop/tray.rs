@@ -434,9 +434,9 @@ fn create_message_window(class_name: &str, window_name: &str) -> Result<HWND> {
             0,
             0,
             0,
-            HWND_MESSAGE,
+            Some(HWND_MESSAGE),
             None,
-            instance,
+            Some(instance.into()),
             None,
         )
     }

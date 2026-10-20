@@ -18,8 +18,8 @@
 
 use std::sync::{Mutex, PoisonError};
 
-use windows::Win32::Foundation::BOOL;
 use windows::Win32::System::Console::SetConsoleCtrlHandler;
+use windows::core::BOOL;
 
 use crate::error::{Error, Result, WindowsApiError};
 use crate::wait::Wait;

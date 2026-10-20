@@ -95,8 +95,8 @@ impl GuiFont {
             SendMessageW(
                 HWND::from(window),
                 WM_SETFONT,
-                WPARAM(self.hfont.0 as usize),
-                LPARAM(1),
+                Some(WPARAM(self.hfont.0 as usize)),
+                Some(LPARAM(1)),
             );
         }
     }
@@ -106,7 +106,7 @@ impl Drop for GuiFont {
     fn drop(&mut self) {
         // SAFETY: the font is owned and deleted once.
         unsafe {
-            let _ = DeleteObject(self.hfont);
+            let _ = DeleteObject(self.hfont.into());
         }
     }
 }
@@ -136,8 +136,8 @@ impl ListView {
             SendMessageW(
                 list.hwnd,
                 WM_CHANGEUISTATE,
-                WPARAM(((UISF_HIDEFOCUS << 16) | UIS_SET) as usize),
-                LPARAM(0),
+                Some(WPARAM(((UISF_HIDEFOCUS << 16) | UIS_SET) as usize)),
+                None,
             );
         }
         Ok(list)
@@ -166,8 +166,8 @@ impl ListView {
             SendMessageW(
                 hwnd,
                 LVM_SETEXTENDEDLISTVIEWSTYLE,
-                WPARAM(extended as usize),
-                LPARAM(extended),
+                Some(WPARAM(extended as usize)),
+                Some(LPARAM(extended)),
             );
         }
         Ok(Self { hwnd, columns: 0 })
@@ -192,8 +192,8 @@ impl ListView {
             SendMessageW(
                 self.hwnd,
                 LVM_INSERTCOLUMNW,
-                WPARAM(self.columns as usize),
-                LPARAM(&column as *const _ as isize),
+                Some(WPARAM(self.columns as usize)),
+                Some(LPARAM(&column as *const _ as isize)),
             )
         };
         if index.0 < 0 {
@@ -211,8 +211,8 @@ impl ListView {
             SendMessageW(
                 self.hwnd,
                 LVM_SETITEMCOUNT,
-                WPARAM(count),
-                LPARAM(LVSICF_NOSCROLL as isize),
+                Some(WPARAM(count)),
+                Some(LPARAM(LVSICF_NOSCROLL as isize)),
             );
         }
         self.handle().invalidate();
@@ -237,8 +237,8 @@ impl ListView {
             SendMessageW(
                 self.hwnd,
                 LVM_SETITEMSTATE,
-                WPARAM(index as usize),
-                LPARAM(&item as *const _ as isize),
+                Some(WPARAM(index as usize)),
+                Some(LPARAM(&item as *const _ as isize)),
             );
         }
     }
@@ -257,13 +257,13 @@ impl ListView {
             let previous = SendMessageW(
                 self.hwnd,
                 LVM_SETIMAGELIST,
-                WPARAM(LVSIL_SMALL as usize),
-                LPARAM(images.0 as isize),
+                Some(WPARAM(LVSIL_SMALL as usize)),
+                Some(LPARAM(images.0 as isize)),
             );
             if previous.0 != 0 {
-                let _ = windows::Win32::UI::Controls::ImageList_Destroy(
+                let _ = windows::Win32::UI::Controls::ImageList_Destroy(Some(
                     windows::Win32::UI::Controls::HIMAGELIST(previous.0),
-                );
+                ));
             }
         }
     }
@@ -294,8 +294,8 @@ impl ListView {
             SendMessageW(
                 self.hwnd,
                 LVM_SETCOLUMNWIDTH,
-                WPARAM(index),
-                LPARAM(width as isize),
+                Some(WPARAM(index)),
+                Some(LPARAM(width as isize)),
             );
         }
     }
@@ -304,14 +304,14 @@ impl ListView {
     pub fn ensure_visible(&self, row: usize) {
         // SAFETY: plain message; FALSE = the whole row must be visible.
         unsafe {
-            SendMessageW(self.hwnd, LVM_ENSUREVISIBLE, WPARAM(row), LPARAM(0));
+            SendMessageW(self.hwnd, LVM_ENSUREVISIBLE, Some(WPARAM(row)), None);
         }
     }
 
     /// The column header control (to theme it).
     pub fn header(&self) -> WindowHandle {
         // SAFETY: plain message returning a child handle.
-        let header = unsafe { SendMessageW(self.hwnd, LVM_GETHEADER, WPARAM(0), LPARAM(0)) };
+        let header = unsafe { SendMessageW(self.hwnd, LVM_GETHEADER, None, None) };
         WindowHandle::new(header.0 as *mut std::ffi::c_void)
     }
 
@@ -328,8 +328,8 @@ impl ListView {
             SendMessageW(
                 self.hwnd,
                 LVM_GETSUBITEMRECT,
-                WPARAM(row),
-                LPARAM(&mut rect as *mut _ as isize),
+                Some(WPARAM(row)),
+                Some(LPARAM(&mut rect as *mut _ as isize)),
             )
         };
         (ok.0 != 0).then(|| rect.into())
@@ -342,20 +342,20 @@ impl ListView {
             SendMessageW(
                 self.hwnd,
                 LVM_SETTEXTCOLOR,
-                WPARAM(0),
-                LPARAM(text as isize),
+                None,
+                Some(LPARAM(text as isize)),
             );
             SendMessageW(
                 self.hwnd,
                 LVM_SETTEXTBKCOLOR,
-                WPARAM(0),
-                LPARAM(background as isize),
+                None,
+                Some(LPARAM(background as isize)),
             );
             SendMessageW(
                 self.hwnd,
                 LVM_SETBKCOLOR,
-                WPARAM(0),
-                LPARAM(background as isize),
+                None,
+                Some(LPARAM(background as isize)),
             );
         }
         self.handle().invalidate();
@@ -368,8 +368,8 @@ impl ListView {
             SendMessageW(
                 self.hwnd,
                 LVM_GETNEXTITEM,
-                WPARAM(usize::MAX),
-                LPARAM(LVNI_SELECTED as isize),
+                Some(WPARAM(usize::MAX)),
+                Some(LPARAM(LVNI_SELECTED as isize)),
             )
         };
         usize::try_from(index.0).ok()
@@ -405,7 +405,7 @@ impl TabControl {
     /// Append a tab.
     pub fn add_tab(&self, label: &str) -> Result<()> {
         // SAFETY: plain message to an owned control.
-        let count = unsafe { SendMessageW(self.hwnd, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)) };
+        let count = unsafe { SendMessageW(self.hwnd, TCM_GETITEMCOUNT, None, None) };
         let mut text = to_utf16_nul(label);
         let item = TCITEMW {
             mask: TCIF_TEXT,
@@ -417,8 +417,8 @@ impl TabControl {
             SendMessageW(
                 self.hwnd,
                 TCM_INSERTITEMW,
-                WPARAM(count.0 as usize),
-                LPARAM(&item as *const _ as isize),
+                Some(WPARAM(count.0 as usize)),
+                Some(LPARAM(&item as *const _ as isize)),
             )
         };
         if index.0 < 0 {
@@ -430,7 +430,7 @@ impl TabControl {
     /// The selected tab, if any.
     pub fn selected(&self) -> Option<usize> {
         // SAFETY: plain message to an owned control.
-        let index = unsafe { SendMessageW(self.hwnd, TCM_GETCURSEL, WPARAM(0), LPARAM(0)) };
+        let index = unsafe { SendMessageW(self.hwnd, TCM_GETCURSEL, None, None) };
         usize::try_from(index.0).ok()
     }
 
@@ -449,8 +449,8 @@ impl TabControl {
             SendMessageW(
                 self.hwnd,
                 TCM_ADJUSTRECT,
-                WPARAM(0),
-                LPARAM(&mut rect as *mut _ as isize),
+                None,
+                Some(LPARAM(&mut rect as *mut _ as isize)),
             );
         }
         rect.into()
@@ -491,8 +491,8 @@ impl StatusBar {
             SendMessageW(
                 self.hwnd,
                 SB_SETTEXTW,
-                WPARAM(0),
-                LPARAM(wide.as_ptr() as isize),
+                None,
+                Some(LPARAM(wide.as_ptr() as isize)),
             );
         }
     }
@@ -501,7 +501,7 @@ impl StatusBar {
     pub fn parent_resized(&self) {
         // SAFETY: a status bar repositions itself on WM_SIZE.
         unsafe {
-            SendMessageW(self.hwnd, WM_SIZE, WPARAM(0), LPARAM(0));
+            SendMessageW(self.hwnd, WM_SIZE, None, None);
         }
     }
 
@@ -599,8 +599,7 @@ unsafe extern "system" fn header_color_subclass(
         let from_header = header.hwndFrom
             == HWND(
                 // SAFETY: plain message to the subclassed list view.
-                unsafe { SendMessageW(hwnd, LVM_GETHEADER, WPARAM(0), LPARAM(0)) }.0
-                    as *mut std::ffi::c_void,
+                unsafe { SendMessageW(hwnd, LVM_GETHEADER, None, None) }.0 as *mut std::ffi::c_void,
             );
         if from_header && header.code == NM_CUSTOMDRAW {
             // SAFETY: a header's NM_CUSTOMDRAW heads an NMCUSTOMDRAW.
@@ -704,7 +703,7 @@ impl ListViewCustomDraw<'_> {
         // notification; every object selected in is selected back out.
         unsafe {
             let brush = CreateSolidBrush(COLORREF(fill));
-            let old_brush = SelectObject(hdc, brush);
+            let old_brush = SelectObject(hdc, brush.into());
             let old_pen = SelectObject(hdc, GetStockObject(NULL_PEN));
             let _ = RoundRect(
                 hdc,
@@ -717,7 +716,7 @@ impl ListViewCustomDraw<'_> {
             );
             SelectObject(hdc, old_pen);
             SelectObject(hdc, old_brush);
-            let _ = DeleteObject(brush);
+            let _ = DeleteObject(brush.into());
             SetBkMode(hdc, TRANSPARENT);
             SetTextColor(hdc, COLORREF(text_color));
             DrawTextW(
@@ -741,7 +740,7 @@ impl ListViewCustomDraw<'_> {
         unsafe {
             let brush = CreateSolidBrush(COLORREF(color));
             FillRect(self.raw.nmcd.hdc, &rc, brush);
-            let _ = DeleteObject(brush);
+            let _ = DeleteObject(brush.into());
         }
     }
 
@@ -871,9 +870,9 @@ fn create_child(
             0,
             0,
             0,
-            HWND::from(parent),
-            HMENU(usize::from(id) as *mut c_void),
-            instance,
+            Some(HWND::from(parent)),
+            Some(HMENU(usize::from(id) as *mut c_void)),
+            Some(instance.into()),
             None,
         )
     }

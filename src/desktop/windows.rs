@@ -1,10 +1,11 @@
 use crate::error::{DesktopError, DesktopOperationError, Error, Result};
-use windows::Win32::Foundation::{BOOL, GetLastError, HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{GetLastError, HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumChildWindows, EnumWindows, GetClassNameW, GetParent, GetWindowRect, GetWindowTextLengthW,
     GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
 };
+use windows::core::BOOL;
 
 use super::types::{CloakState, WindowHandle, WindowInfo, WindowRect};
 
@@ -203,7 +204,7 @@ fn collect_child_window_handles(parent: HWND, out_handles: &mut Vec<HWND>) -> Re
 
     let ok = unsafe {
         EnumChildWindows(
-            parent,
+            Some(parent),
             Some(collect_window_callback),
             LPARAM(out_handles as *mut Vec<HWND> as isize),
         )

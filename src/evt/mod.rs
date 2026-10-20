@@ -248,7 +248,7 @@ impl EventLog {
 
         let handle = unsafe {
             EvtOpenLog(
-                EVT_HANDLE::default(), // Local computer
+                None, // Local computer
                 PWSTR(channel_wide.as_ptr() as *mut u16),
                 EvtOpenChannelPath.0,
             )
@@ -280,7 +280,7 @@ impl EventLog {
 
         let handle = unsafe {
             EvtOpenLog(
-                EVT_HANDLE::default(), // Local computer
+                None, // Local computer
                 PWSTR(path_wide.as_ptr() as *mut u16),
                 EvtOpenFilePath.0,
             )
@@ -308,13 +308,12 @@ impl EventLog {
     pub fn list_channels_filtered(filter: ChannelFilter) -> Result<Vec<String>> {
         let mut channels = Vec::new();
 
-        let enum_handle =
-            unsafe { EvtOpenChannelEnum(EVT_HANDLE::default(), 0) }.map_err(|_| {
-                Error::EventLog(EventLogError::QueryFailed(EventLogQueryError::new(
-                    "channels",
-                    "Failed to enumerate channels",
-                )))
-            })?;
+        let enum_handle = unsafe { EvtOpenChannelEnum(None, 0) }.map_err(|_| {
+            Error::EventLog(EventLogError::QueryFailed(EventLogQueryError::new(
+                "channels",
+                "Failed to enumerate channels",
+            )))
+        })?;
 
         let mut buffer = [0u16; 1024];
 
@@ -373,7 +372,7 @@ impl EventLog {
 
         let query_handle = unsafe {
             EvtQuery(
-                EVT_HANDLE::default(), // Local computer
+                None, // Local computer
                 PWSTR(channel_wide.as_ptr() as *mut u16),
                 PWSTR(xpath_wide.as_ptr() as *mut u16),
                 flags,
@@ -826,7 +825,7 @@ impl EventQuery {
 
             let render_result = unsafe {
                 EvtRender(
-                    EVT_HANDLE::default(),
+                    None,
                     handle,
                     EvtRenderEventXml.0,
                     buffer.len() as u32,

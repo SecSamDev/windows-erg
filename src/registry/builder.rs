@@ -95,7 +95,7 @@ impl RegistryKeyBuilder {
             let result = RegOpenKeyExW(
                 hive.as_hkey(),
                 &subkey_wide,
-                0,
+                Some(0),
                 REG_SAM_FLAGS(sam_flags),
                 &mut handle,
             );

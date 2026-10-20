@@ -95,7 +95,7 @@ pub fn delete_no_follow(path: &Path) -> Result<()> {
     refuse_reparse_point(&file, path)?;
 
     let info = FILE_DISPOSITION_INFO {
-        DeleteFile: true.into(),
+        DeleteFile: true,
     };
     // SAFETY: `file` was opened with DELETE access and is alive for this
     // call; `info` is a correctly sized FILE_DISPOSITION_INFO on the stack.
@@ -211,7 +211,7 @@ fn nt_open(
         // Case-insensitive like Win32. No OBJ_OPENLINK: that only affects
         // object-manager symbolic links; file system reparse points are
         // handled by FILE_OPEN_REPARSE_POINT in `options`.
-        Attributes: 0x40, // OBJ_CASE_INSENSITIVE
+        Attributes: windows::Win32::Foundation::OBJ_CASE_INSENSITIVE,
         SecurityDescriptor: std::ptr::null(),
         SecurityQualityOfService: std::ptr::null(),
     };

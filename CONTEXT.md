@@ -56,11 +56,19 @@ impl Drop for MyHandle {
 }
 ```
 
-### windows crate 0.58 — Handle and API Changes
+### windows crate 0.62 — Handle and API Changes
 
 These differ from older examples and online documentation:
 
+- Optional handle and value parameters are `Option<T>` (`HWND`, `HANDLE`, `HMODULE`/`HINSTANCE`, `HLOCAL`, `HGLOBAL`, `EVT_HANDLE`, `BCRYPT_*_HANDLE`, `WPARAM`/`LPARAM`, reserved `u32`s, `PWSTR`). Pass `Some(h)`, or `None` for "no handle" / zero — never `Some(HWND::default())`.
+- `BOOL` lives in `windows::core::BOOL`, not `Win32::Foundation`. Some fields and parameters that were `BOOL`/`BOOLEAN` are plain `bool` (e.g. `FILE_DISPOSITION_INFO::DeleteFile`, DirectWrite `GetSystemFontCollection`).
+- GDI calls take `HGDIOBJ`: pass `brush.into()` / `font.into()`. `HMODULE` converts to `HINSTANCE` with `.into()`.
+- Direct2D points are `windows_numerics::Vector2 { X, Y }` (no `D2D_POINT_2F`); `windows-numerics` is a direct dependency because `windows` does not re-export it.
+- `windows::core::Error::from_thread()` reads `GetLastError` (replaces `from_win32()`); `HRESULT::from_win32(code)` is unchanged.
+- `HSTRING` derefs to `[u16]` (no `as_wide()`).
+- Typed flags/handles instead of integers: `OBJECT_ATTRIBUTES.Attributes` is `OBJECT_ATTRIBUTE_FLAGS` (use `Win32::Foundation::OBJ_CASE_INSENSITIVE`); `EventRegister` writes a `REGHANDLE`.
 - `HANDLE` is pointer-backed: use `HANDLE(std::ptr::null_mut())` and `handle.0.is_null()` for null checks — not `HANDLE(0)` or integer comparisons.
+- 32-bit targets: `SetWindowLongPtrW`/`GetWindowLongPtrW` are aliases of the `i32` `SetWindowLongW`/`GetWindowLongW` (cast with `as _`), and some structs are `packed(1)` (e.g. `NOTIFYICONDATAW`), so never take `&mut` to their fields — assign whole values.
 - `GetWindowRect` returns `Result<()>` (not BOOL).
 - `GetWindowTextW` / `GetClassNameW` accept `&mut [u16]`.
 - `CreateWindowExW` returns `Result<HWND>`.
@@ -181,7 +189,7 @@ Treat `src/registry/` and `src/process/` as style and pattern anchors for all ne
 - Network, Registry, FileIO providers rely on TDH schema parsing only (no direct binary decoders). Silent fallback to `Unknown` if TDH fails.
 - `run_until_stopped` discards the events it drains on each poll — it exists for lifecycle demos, not as a consumption API. Use `next_batch_timeout` in a caller-owned loop instead.
 - ETW test coverage: builder validation, schema parsing, decode round-trips, `kernel_session_config`, and channel-drain/backpressure tests all run unelevated. Full session lifecycle (`etw_integration.rs`) and the two-concurrent-private-logger-sessions test are `#[ignore]`d — they need Administrator and real kernel session access.
-- `TDH_INTYPE_IPV4`/`TDH_INTYPE_IPV6` not exported by windows-rs 0.58; use numeric values 19/20 in schema.rs.
+- `TDH_INTYPE_IPV4`/`TDH_INTYPE_IPV6` not exported by windows-rs (still missing in 0.62); use numeric values 19/20 in schema.rs.
 - `TDH_OUTTYPE_PORT` is network byte order: schema.rs decodes it big-endian (measured with `examples/etw_tcpip_probe.rs`, 2026-10-06; little-endian gave 443 as 47873).
 - Classic `TcpIp` events carry header PID `0xFFFFFFFF`; the owner is the payload `PID` (`TcpEvent.process_id`), so `with_process_filter` drops them all. `saddr`/`sport` is the event's own process's end for Connect and Accept alike, and loopback connections are delivered.
 - `UdpIp` is not decoded (arrives as `DecodedEvent::Generic`).
@@ -261,7 +269,7 @@ Do not:
 - add manual CloseHandle calls at call sites for owned handles
 - post-filter large collections after full allocation
 - create extra markdown files without a request
-- use HANDLE(0) or integer null checks — HANDLE is pointer-backed in windows 0.58
+- use HANDLE(0) or integer null checks — HANDLE is pointer-backed in windows 0.62
 
 ## 9) High-Value References
 

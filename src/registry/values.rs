@@ -62,13 +62,13 @@ impl RegistryValue for String {
     fn write_to_key(self, key: &RegistryKey, name: &str) -> Result<()> {
         let name_wide = HSTRING::from(name);
         let value_wide = HSTRING::from(&self);
-        let bytes = value_wide.as_wide();
+        let bytes: &[u16] = &value_wide;
 
         unsafe {
             let result = RegSetValueExW(
                 key.handle,
                 &name_wide,
-                0,
+                Some(0),
                 REG_SZ,
                 Some(std::slice::from_raw_parts(
                     bytes.as_ptr() as *const u8,
@@ -150,7 +150,7 @@ impl RegistryValue for u32 {
             let result = RegSetValueExW(
                 key.handle,
                 &name_wide,
-                0,
+                Some(0),
                 REG_DWORD,
                 Some(std::slice::from_raw_parts(
                     &self as *const u32 as *const u8,
@@ -218,7 +218,7 @@ impl RegistryValue for u64 {
             let result = RegSetValueExW(
                 key.handle,
                 &name_wide,
-                0,
+                Some(0),
                 REG_QWORD,
                 Some(std::slice::from_raw_parts(
                     &self as *const u64 as *const u8,
@@ -296,7 +296,7 @@ impl RegistryValue for Vec<u8> {
         let name_wide = HSTRING::from(name);
 
         unsafe {
-            let result = RegSetValueExW(key.handle, &name_wide, 0, REG_BINARY, Some(&self));
+            let result = RegSetValueExW(key.handle, &name_wide, Some(0), REG_BINARY, Some(&self));
 
             if result.is_err() {
                 return Err(Error::WindowsApi(crate::error::WindowsApiError::new(
@@ -377,7 +377,7 @@ impl RegistryValue for Vec<String> {
         let mut buffer = Vec::new();
         for s in self {
             let wide = HSTRING::from(&s);
-            buffer.extend_from_slice(wide.as_wide());
+            buffer.extend_from_slice(&wide);
             buffer.push(0); // Null terminator
         }
         buffer.push(0); // Final null terminator
@@ -386,7 +386,7 @@ impl RegistryValue for Vec<String> {
             let result = RegSetValueExW(
                 key.handle,
                 &name_wide,
-                0,
+                Some(0),
                 REG_MULTI_SZ,
                 Some(std::slice::from_raw_parts(
                     buffer.as_ptr() as *const u8,

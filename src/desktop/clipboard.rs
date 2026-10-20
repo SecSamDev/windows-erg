@@ -19,7 +19,7 @@ impl Opened {
     fn open(owner: Option<WindowHandle>) -> Result<Self> {
         let hwnd = owner.map(HWND::from).unwrap_or_default();
         // SAFETY: opens the clipboard for this thread; closed on drop.
-        unsafe { OpenClipboard(hwnd) }
+        unsafe { OpenClipboard(Some(hwnd)) }
             .map_err(|e| op_error("OpenClipboard", "clipboard", e.code().0))?;
         Ok(Opened)
     }
@@ -53,7 +53,7 @@ pub fn set_text(owner: Option<WindowHandle>, text: &str) -> Result<()> {
     }
     // SAFETY: on success the system owns `memory`; on failure it leaks a
     // few bytes rather than risk freeing a block the system may hold.
-    unsafe { SetClipboardData(u32::from(CF_UNICODETEXT.0), HANDLE(memory.0)) }
+    unsafe { SetClipboardData(u32::from(CF_UNICODETEXT.0), Some(HANDLE(memory.0))) }
         .map_err(|e| op_error("SetClipboardData", "clipboard", e.code().0))?;
     Ok(())
 }

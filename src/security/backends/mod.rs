@@ -23,7 +23,7 @@ impl Drop for LocalDescriptor {
     fn drop(&mut self) {
         // SAFETY: the descriptor was allocated by a Win32 API with LocalAlloc.
         unsafe {
-            let _ = LocalFree(HLOCAL(self.0.0));
+            let _ = LocalFree(Some(HLOCAL(self.0.0)));
         }
     }
 }
@@ -104,7 +104,7 @@ pub(super) fn dacl_to_sddl_string(descriptor: &LocalDescriptor) -> Result<String
     let text = pwstr_to_string_len(sddl, sddl_len as usize);
     // SAFETY: allocated by the conversion above and not used again.
     unsafe {
-        let _ = LocalFree(HLOCAL(sddl.0.cast()));
+        let _ = LocalFree(Some(HLOCAL(sddl.0.cast())));
     }
     Ok(text.trim_end_matches('\0').to_string())
 }

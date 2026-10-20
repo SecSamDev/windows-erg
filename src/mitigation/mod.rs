@@ -351,7 +351,7 @@ fn apply_payload_mitigation() -> Result<()> {
     }
 
     Err(map_windows_apply_error(
-        last_error.unwrap_or_else(windows::core::Error::from_win32),
+        last_error.unwrap_or_else(windows::core::Error::from_thread),
         "payload_restriction",
     ))
 }

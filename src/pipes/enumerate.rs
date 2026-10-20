@@ -9,6 +9,7 @@ use windows::Wdk::Storage::FileSystem::{
     FileDirectoryInformation, FilePipeLocalInformation, NtCreateFile, NtQueryDirectoryFile,
     NtQueryInformationFile,
 };
+use windows::Win32::Foundation::OBJ_CASE_INSENSITIVE;
 use windows::Win32::Foundation::{HANDLE, RtlNtStatusToDosError, UNICODE_STRING};
 use windows::Win32::Storage::FileSystem::{
     FILE_FLAGS_AND_ATTRIBUTES, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
@@ -28,7 +29,6 @@ use crate::types::ProcessId;
 
 const NAMED_PIPE_DIRECTORY_PATH: &str = r"\Device\NamedPipe\";
 const NAMED_PIPE_DIRECTORY_RESOURCE: &str = r"\Device\NamedPipe";
-const OBJ_CASE_INSENSITIVE: u32 = 0x0000_0040;
 const SYNCHRONIZE_ACCESS: u32 = 0x0010_0000;
 const STATUS_SUCCESS: i32 = 0;
 const STATUS_NO_MORE_FILES: i32 = 0x8000_0006_u32 as i32;
@@ -166,7 +166,7 @@ where
         let status = unsafe {
             NtQueryDirectoryFile(
                 directory_handle.raw(),
-                HANDLE(std::ptr::null_mut()),
+                None,
                 None,
                 None,
                 &mut io_status,

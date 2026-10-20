@@ -472,7 +472,7 @@ fn extract_variant_field(event_handle: EVT_HANDLE, field_index: usize) -> Result
 
     let result = unsafe {
         EvtRender(
-            EVT_HANDLE::default(),
+            None,
             event_handle,
             EvtRenderEventValues.0,
             buffer.len() as u32,

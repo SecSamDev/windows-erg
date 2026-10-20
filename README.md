@@ -26,7 +26,7 @@ Add to Cargo.toml:
 
 ```toml
 [dependencies]
-windows-erg = "0.1"
+windows-erg = "0.4"
 ```
 
 ## Platform Requirements
@@ -313,7 +313,7 @@ Enable serde support for event log serialization:
 
 ```toml
 [dependencies]
-windows-erg = { version = "0.1", features = ["serde"] }
+windows-erg = { version = "0.4", features = ["serde"] }
 ```
 
 ## Documentation

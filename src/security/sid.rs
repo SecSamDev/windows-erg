@@ -105,9 +105,9 @@ impl Sid {
             LookupAccountSidW(
                 PCWSTR::null(),
                 sid,
-                PWSTR::null(),
+                Some(PWSTR::null()),
                 &mut name_len,
-                PWSTR::null(),
+                Some(PWSTR::null()),
                 &mut domain_len,
                 &mut kind,
             )
@@ -128,9 +128,9 @@ impl Sid {
             LookupAccountSidW(
                 PCWSTR::null(),
                 sid,
-                PWSTR(name.as_mut_ptr()),
+                Some(PWSTR(name.as_mut_ptr())),
                 &mut name_len,
-                PWSTR(domain.as_mut_ptr()),
+                Some(PWSTR(domain.as_mut_ptr())),
                 &mut domain_len,
                 &mut kind,
             )

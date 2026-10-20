@@ -58,7 +58,7 @@ fn get_publisher_metadata(provider_name: &str) -> Result<Option<EvtPublisherHand
 
     let handle = unsafe {
         EvtOpenPublisherMetadata(
-            EVT_HANDLE::default(), // Local computer
+            None, // Local computer
             PWSTR(provider_wide.as_ptr() as *mut u16),
             PWSTR::null(), // Local publisher
             0,             // Default locale
@@ -107,7 +107,7 @@ pub fn render_event(
 
         let result = unsafe {
             EvtRender(
-                EVT_HANDLE::default(),
+                None,
                 event_handle,
                 EvtRenderEventXml.0,
                 buffer.len() as u32,
@@ -148,7 +148,7 @@ fn render_event_values(event_handle: EVT_HANDLE) -> std::result::Result<Event, C
     // Render event with system context to extract individual values
     let result = unsafe {
         EvtRender(
-            EVT_HANDLE::default(), // System context
+            None, // System context
             event_handle,
             EvtRenderEventValues.0,
             buffer.len() as u32,
@@ -263,7 +263,7 @@ fn render_event_xml(event_handle: EVT_HANDLE) -> std::result::Result<Event, Corr
 
     let result = unsafe {
         EvtRender(
-            EVT_HANDLE::default(),
+            None,
             event_handle,
             EvtRenderEventXml.0,
             buffer.len() as u32,
@@ -623,8 +623,8 @@ pub fn format_message(event_handle: EVT_HANDLE, provider_name: &str) -> Result<O
 
         let result = unsafe {
             EvtFormatMessage(
-                metadata_handle.0,
-                event_handle,
+                Some(metadata_handle.0),
+                Some(event_handle),
                 0,                       // No message ID (use event's own message)
                 None,                    // No values array
                 EvtFormatMessageEvent.0, // Format the event message

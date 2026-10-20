@@ -59,7 +59,7 @@ pub(crate) fn read_descriptor(path: &str) -> Result<SecurityDescriptor> {
             Some(&mut sddl_len),
         )
         .map_err(|e| {
-            let _ = LocalFree(HLOCAL(security_descriptor.0));
+            let _ = LocalFree(Some(HLOCAL(security_descriptor.0)));
             Error::WindowsApi(WindowsApiError::with_context(
                 e,
                 "ConvertSecurityDescriptorToStringSecurityDescriptorW",
@@ -70,8 +70,8 @@ pub(crate) fn read_descriptor(path: &str) -> Result<SecurityDescriptor> {
     let sddl_str = pwstr_to_string_len(sddl, sddl_len as usize);
 
     unsafe {
-        let _ = LocalFree(HLOCAL(sddl.0 as *mut core::ffi::c_void));
-        let _ = LocalFree(HLOCAL(security_descriptor.0));
+        let _ = LocalFree(Some(HLOCAL(sddl.0 as *mut core::ffi::c_void)));
+        let _ = LocalFree(Some(HLOCAL(security_descriptor.0)));
     }
 
     sddl_to_descriptor(path, &sddl_str)
@@ -127,7 +127,7 @@ pub(crate) fn write_descriptor(path: &str, descriptor: &SecurityDescriptor) -> R
 
     if !dacl_present.as_bool() || dacl.is_null() {
         unsafe {
-            let _ = LocalFree(HLOCAL(security_descriptor.0));
+            let _ = LocalFree(Some(HLOCAL(security_descriptor.0)));
         }
         return Err(Error::Other(OtherError::new(
             "generated security descriptor has no DACL",
@@ -163,7 +163,7 @@ pub(crate) fn write_descriptor(path: &str, descriptor: &SecurityDescriptor) -> R
     if descriptor.owner().is_some() {
         if owner_sid.0.is_null() {
             unsafe {
-                let _ = LocalFree(HLOCAL(security_descriptor.0));
+                let _ = LocalFree(Some(HLOCAL(security_descriptor.0)));
             }
             return Err(Error::Other(OtherError::new(
                 "generated security descriptor has no owner SID",
@@ -177,7 +177,7 @@ pub(crate) fn write_descriptor(path: &str, descriptor: &SecurityDescriptor) -> R
     if descriptor.group().is_some() {
         if group_sid.0.is_null() {
             unsafe {
-                let _ = LocalFree(HLOCAL(security_descriptor.0));
+                let _ = LocalFree(Some(HLOCAL(security_descriptor.0)));
             }
             return Err(Error::Other(OtherError::new(
                 "generated security descriptor has no group SID",
@@ -192,15 +192,15 @@ pub(crate) fn write_descriptor(path: &str, descriptor: &SecurityDescriptor) -> R
             hkey_as_handle(key.handle),
             SE_REGISTRY_KEY,
             security_information,
-            owner_for_set,
-            group_for_set,
+            Some(owner_for_set),
+            Some(group_for_set),
             Some(dacl as *const ACL),
             None,
         )
     };
 
     unsafe {
-        let _ = LocalFree(HLOCAL(security_descriptor.0));
+        let _ = LocalFree(Some(HLOCAL(security_descriptor.0)));
     }
 
     if set_result.0 != 0 {
@@ -225,8 +225,8 @@ pub(crate) fn set_protected_dacl(path: &str, sddl: &str) -> Result<()> {
             hkey_as_handle(key.handle),
             SE_REGISTRY_KEY,
             DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            PSID::default(),
-            PSID::default(),
+            None,
+            None,
             Some(dacl as *const ACL),
             None,
         )
@@ -313,7 +313,7 @@ fn open_registry_key(hive: HKEY, subkey: &str, sam_desired: u32) -> Result<OpenR
         RegOpenKeyExW(
             hive,
             PCWSTR(subkey_wide.as_ptr()),
-            0,
+            Some(0),
             REG_SAM_FLAGS(sam_desired),
             &mut key,
         )

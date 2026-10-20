@@ -28,7 +28,7 @@ pub mod dpapi;
 
 use windows::Win32::Foundation::{NTSTATUS, STATUS_AUTH_TAG_MISMATCH, STATUS_INVALID_SIGNATURE};
 use windows::Win32::Security::Cryptography::{
-    BCRYPT_AES_GCM_ALG_HANDLE, BCRYPT_ALG_HANDLE, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO,
+    BCRYPT_AES_GCM_ALG_HANDLE, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO,
     BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION, BCRYPT_ECCKEY_BLOB, BCRYPT_ECCPRIVATE_BLOB,
     BCRYPT_ECCPUBLIC_BLOB, BCRYPT_ECDSA_P256_ALG_HANDLE, BCRYPT_ECDSA_PRIVATE_P256_MAGIC,
     BCRYPT_ECDSA_PUBLIC_P256_MAGIC, BCRYPT_FLAGS, BCRYPT_HMAC_SHA256_ALG_HANDLE, BCRYPT_KEY_HANDLE,
@@ -100,13 +100,7 @@ pub fn md5(data: &[u8]) -> Result<[u8; MD5_LEN]> {
 pub fn random_bytes(buffer: &mut [u8]) -> Result<()> {
     // SAFETY: BCRYPT_USE_SYSTEM_PREFERRED_RNG requires a null algorithm
     // handle; `buffer` is a valid slice.
-    let status = unsafe {
-        BCryptGenRandom(
-            BCRYPT_ALG_HANDLE::default(),
-            buffer,
-            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
-        )
-    };
+    let status = unsafe { BCryptGenRandom(None, buffer, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
     check(status, "BCryptGenRandom")
 }
 
@@ -298,7 +292,7 @@ impl EcdsaP256PrivateKey {
         let status = unsafe {
             BCryptExportKey(
                 key.0,
-                BCRYPT_KEY_HANDLE::default(),
+                None,
                 BCRYPT_ECCPRIVATE_BLOB,
                 Some(&mut blob),
                 &mut written,
@@ -377,7 +371,7 @@ impl KeyHandle {
         let status = unsafe {
             BCryptImportKeyPair(
                 BCRYPT_ECDSA_P256_ALG_HANDLE,
-                BCRYPT_KEY_HANDLE::default(),
+                None,
                 blob_type,
                 &mut handle,
                 blob,

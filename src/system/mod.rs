@@ -171,7 +171,7 @@ pub fn known_folder(folder: KnownFolder) -> Result<std::path::PathBuf> {
         KnownFolder::RoamingAppData => FOLDERID_RoamingAppData,
     };
     // SAFETY: `id` is a valid folder GUID; a null token selects the current user.
-    let raw = unsafe { SHGetKnownFolderPath(&id, KF_FLAG_DEFAULT, HANDLE::default()) }
+    let raw = unsafe { SHGetKnownFolderPath(&id, KF_FLAG_DEFAULT, None) }
         .map_err(|e| Error::WindowsApi(WindowsApiError::with_context(e, "SHGetKnownFolderPath")))?;
     let path = pwstr_to_string(raw);
     // SAFETY: the shell allocated `raw` with the COM allocator and it is not used again.
@@ -380,7 +380,7 @@ where
 
     if chars == 0 {
         return Err(Error::WindowsApi(WindowsApiError::with_context(
-            windows::core::Error::from_win32(),
+            windows::core::Error::from_thread(),
             "GetLogicalDriveStringsW",
         )));
     }
@@ -390,7 +390,7 @@ where
         let second = unsafe { GetLogicalDriveStringsW(Some(&mut work_buffer)) } as usize;
         if second == 0 {
             return Err(Error::WindowsApi(WindowsApiError::with_context(
-                windows::core::Error::from_win32(),
+                windows::core::Error::from_thread(),
                 "GetLogicalDriveStringsW",
             )));
         }
@@ -942,7 +942,7 @@ fn firmware_guid_from_smbios() -> Result<Option<String>> {
 
     if written == 0 {
         return Err(Error::WindowsApi(WindowsApiError::with_context(
-            windows::core::Error::from_win32(),
+            windows::core::Error::from_thread(),
             "GetSystemFirmwareTable",
         )));
     }

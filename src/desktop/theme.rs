@@ -1,7 +1,7 @@
 //! Light and dark appearance: the system preference, the title bar, the
 //! window backdrop, themed common controls and menus.
 
-use windows::Win32::Foundation::{BOOL, HWND};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{
     DWM_SYSTEMBACKDROP_TYPE, DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMWA_SYSTEMBACKDROP_TYPE,
     DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,
@@ -9,6 +9,7 @@ use windows::Win32::Graphics::Dwm::{
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::Controls::SetWindowTheme;
 use windows::Win32::UI::WindowsAndMessaging::WM_SETTINGCHANGE;
+use windows::core::BOOL;
 use windows::core::{PCSTR, PCWSTR, w};
 
 use crate::registry::{self, Hive};

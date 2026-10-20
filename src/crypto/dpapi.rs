@@ -111,7 +111,7 @@ fn take(output: CRYPT_INTEGER_BLOB) -> Vec<u8> {
     // `cbData` bytes; it is copied once and freed exactly once.
     unsafe {
         let data = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
-        let _ = LocalFree(HLOCAL(output.pbData.cast()));
+        let _ = LocalFree(Some(HLOCAL(output.pbData.cast())));
         data
     }
 }

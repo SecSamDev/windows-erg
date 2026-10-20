@@ -72,7 +72,8 @@ impl RegistryKey {
         let mut handle = HKEY::default();
 
         unsafe {
-            let result = RegOpenKeyExW(hive.as_hkey(), &subkey_wide, 0, KEY_READ, &mut handle);
+            let result =
+                RegOpenKeyExW(hive.as_hkey(), &subkey_wide, Some(0), KEY_READ, &mut handle);
 
             if result.is_err() {
                 if result == ERROR_FILE_NOT_FOUND {
@@ -113,7 +114,7 @@ impl RegistryKey {
             let result = RegCreateKeyExW(
                 hive.as_hkey(),
                 &subkey_wide,
-                0,
+                Some(0),
                 PCWSTR::null(),
                 REG_OPTION_NON_VOLATILE,
                 KEY_READ | KEY_WRITE,
@@ -338,10 +339,10 @@ impl RegistryKey {
                 let result = RegEnumKeyExW(
                     self.handle,
                     index,
-                    windows::core::PWSTR(name_buf.as_mut_ptr()),
+                    Some(windows::core::PWSTR(name_buf.as_mut_ptr())),
                     &mut name_len,
                     None,
-                    windows::core::PWSTR::null(),
+                    Some(windows::core::PWSTR::null()),
                     None,
                     None,
                 );
@@ -379,7 +380,7 @@ impl RegistryKey {
                 let result = RegEnumValueW(
                     self.handle,
                     index,
-                    windows::core::PWSTR(name_buf.as_mut_ptr()),
+                    Some(windows::core::PWSTR(name_buf.as_mut_ptr())),
                     &mut name_len,
                     None,
                     None,

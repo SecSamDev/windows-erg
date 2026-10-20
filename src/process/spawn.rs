@@ -98,9 +98,9 @@ impl AttributeList {
         let mut size = 0;
         unsafe {
             let _ = InitializeProcThreadAttributeList(
-                LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()),
+                Some(LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut())),
                 1,
-                0,
+                Some(0),
                 &mut size,
             );
         }
@@ -108,13 +108,15 @@ impl AttributeList {
         let mut buffer = vec![0u8; size];
         let ptr = LPPROC_THREAD_ATTRIBUTE_LIST(buffer.as_mut_ptr() as *mut _);
 
-        unsafe { InitializeProcThreadAttributeList(ptr, 1, 0, &mut size) }.map_err(|e| {
-            Error::Process(ProcessError::SpawnFailed(ProcessSpawnError::with_code(
-                "<attribute_list>",
-                "Failed to initialize process attribute list",
-                e.code().0,
-            )))
-        })?;
+        unsafe { InitializeProcThreadAttributeList(Some(ptr), 1, Some(0), &mut size) }.map_err(
+            |e| {
+                Error::Process(ProcessError::SpawnFailed(ProcessSpawnError::with_code(
+                    "<attribute_list>",
+                    "Failed to initialize process attribute list",
+                    e.code().0,
+                )))
+            },
+        )?;
 
         let parent_ptr = std::ptr::addr_of!(parent_handle.0);
 
@@ -248,7 +250,7 @@ fn enable_privilege(privilege_name: &str, command: &str) -> Result<()> {
 
 fn create_env_block(token: HANDLE, command: &str) -> Result<EnvBlock> {
     let mut env_block: *mut c_void = std::ptr::null_mut();
-    unsafe { CreateEnvironmentBlock(&mut env_block, token, false) }
+    unsafe { CreateEnvironmentBlock(&mut env_block, Some(token), false) }
         .map_err(|e| map_spawn_windows_error(command, "Failed to create environment block", &e))?;
     Ok(EnvBlock(env_block))
 }
@@ -308,7 +310,7 @@ impl SpawnedProcess {
     pub fn resume(&self) -> Result<()> {
         let result = unsafe { ResumeThread(self.thread) };
         if result == u32::MAX {
-            let err = windows::core::Error::from_win32();
+            let err = windows::core::Error::from_thread();
             return Err(Error::Process(ProcessError::SpawnFailed(
                 ProcessSpawnError::with_code(
                     "<resume-thread>",
@@ -481,9 +483,9 @@ impl ProcessSpawner {
         let result = if let Some(token) = process_token.as_ref() {
             unsafe {
                 CreateProcessAsUserW(
-                    token.raw(),
+                    Some(token.raw()),
                     PCWSTR::null(),
-                    command_ptr,
+                    Some(command_ptr),
                     None,
                     None,
                     false,
@@ -498,7 +500,7 @@ impl ProcessSpawner {
             unsafe {
                 CreateProcessW(
                     PCWSTR::null(),
-                    command_ptr,
+                    Some(command_ptr),
                     None,
                     None,
                     false,

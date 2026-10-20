@@ -76,7 +76,7 @@ impl Drop for NativePipeSecurityAttributes {
     fn drop(&mut self) {
         if let Some(descriptor) = self.descriptor {
             unsafe {
-                let _ = LocalFree(HLOCAL(descriptor.0));
+                let _ = LocalFree(Some(HLOCAL(descriptor.0)));
             }
         }
     }

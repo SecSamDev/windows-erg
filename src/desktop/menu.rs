@@ -76,11 +76,11 @@ impl PopupMenu {
                 TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
                 x,
                 y,
-                0,
+                Some(0),
                 hwnd,
                 None,
             );
-            let _ = PostMessageW(hwnd, WM_NULL, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
             chosen
         };
         u32::try_from(chosen.0).ok().filter(|id| *id != 0)
