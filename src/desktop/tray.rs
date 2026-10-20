@@ -167,20 +167,21 @@ impl TrayIcon {
     pub fn show_notification(&self, notification: &TrayNotification) -> Result<()> {
         let mut data = self.base_notify_data();
         data.uFlags = NIF_INFO;
-        copy_text_to_fixed(&notification.body, &mut data.szInfo);
-        copy_text_to_fixed(&notification.title, &mut data.szInfoTitle);
-        data.dwInfoFlags = match notification.icon {
+        data.szInfo = fixed_text(&notification.body);
+        data.szInfoTitle = fixed_text(&notification.title);
+        let mut flags = match notification.icon {
             BalloonIcon::None => NIIF_NONE,
             BalloonIcon::Info => NIIF_INFO,
             BalloonIcon::Warning => NIIF_WARNING,
             BalloonIcon::Error => NIIF_ERROR,
         };
         if notification.respect_quiet_time {
-            data.dwInfoFlags |= NIIF_RESPECT_QUIET_TIME;
+            flags |= NIIF_RESPECT_QUIET_TIME;
         }
         if notification.silent {
-            data.dwInfoFlags |= NIIF_NOSOUND;
+            flags |= NIIF_NOSOUND;
         }
+        data.dwInfoFlags = flags;
 
         notify(NIM_MODIFY, &data, "NIM_MODIFY notification")
     }
@@ -189,7 +190,7 @@ impl TrayIcon {
     pub fn update_tooltip(&self, tooltip: &str) -> Result<()> {
         let mut data = self.base_notify_data();
         data.uFlags = NIF_TIP | self.show_tip_flag();
-        copy_text_to_fixed(tooltip, &mut data.szTip);
+        data.szTip = fixed_text(tooltip);
 
         notify(NIM_MODIFY, &data, "NIM_MODIFY tooltip")?;
         *self.tooltip.borrow_mut() = tooltip.to_string();
@@ -230,13 +231,14 @@ impl TrayIcon {
 
     fn add_icon(&mut self, tooltip: &str) -> Result<()> {
         let mut data = self.base_notify_data();
-        data.uFlags = NIF_ICON | NIF_TIP | self.show_tip_flag();
+        let mut flags = NIF_ICON | NIF_TIP | self.show_tip_flag();
         data.hIcon = self.hicon;
-        copy_text_to_fixed(tooltip, &mut data.szTip);
+        data.szTip = fixed_text(tooltip);
         if let Some(message) = self.callback_message {
-            data.uFlags |= NIF_MESSAGE;
+            flags |= NIF_MESSAGE;
             data.uCallbackMessage = message;
         }
+        data.uFlags = flags;
 
         notify(NIM_ADD, &data, "NIM_ADD")?;
         self.icon_added = true;
@@ -462,17 +464,19 @@ unsafe extern "system" fn tray_window_proc(
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
-fn copy_text_to_fixed<const N: usize>(text: &str, destination: &mut [u16; N]) {
-    destination.fill(0);
-    let mut encoded = text.encode_utf16();
-
-    for slot in destination.iter_mut().take(N.saturating_sub(1)) {
-        if let Some(ch) = encoded.next() {
-            *slot = ch;
-        } else {
-            break;
-        }
+/// Returns `text` as a NUL-terminated, truncated UTF-16 buffer. Returned by
+/// value because `NOTIFYICONDATAW` is packed on x86, where `&mut` to its
+/// fields would be unaligned.
+fn fixed_text<const N: usize>(text: &str) -> [u16; N] {
+    let mut destination = [0u16; N];
+    for (slot, ch) in destination
+        .iter_mut()
+        .take(N.saturating_sub(1))
+        .zip(text.encode_utf16())
+    {
+        *slot = ch;
     }
+    destination
 }
 
 fn validate_window_name(field: &'static str, value: &str) -> Result<()> {

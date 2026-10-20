@@ -1,17 +1,13 @@
 use super::events::{DecodedEvent, ImageLoadEvent, ImageUnloadEvent};
-use super::helpers::{extract_value_from_buffer, utf16_until_null};
+use super::helpers::{extract_pointer_from_buffer, extract_value_from_buffer, utf16_until_null};
 use crate::types::ProcessId;
 
 const IMAGE_LOAD: u8 = 10;
 const IMAGE_UNLOAD: u8 = 2;
 
-#[cfg(target_pointer_width = "32")]
-const POINTER_SIZE: usize = 4;
-
-#[cfg(target_pointer_width = "64")]
-const POINTER_SIZE: usize = 8;
-
-const REQUIRED_SIZE_V3: usize = 12 * 4 + 4 * POINTER_SIZE;
+const fn required_size_v3(pointer_size: usize) -> usize {
+    12 * 4 + 4 * pointer_size
+}
 
 #[derive(Debug, Clone)]
 struct ImageCommon {
@@ -27,10 +23,17 @@ struct ImageCommon {
 /// Decode image provider payload bytes into typed load/unload events.
 ///
 /// Currently supports image payload versions 2, 3, and 4 and returns `None`
-/// for unsupported versions, opcodes, or truncated payloads.
-pub(crate) fn decode_image_parts(version: u8, opcode: u8, data: &[u8]) -> Option<DecodedEvent> {
+/// for unsupported versions, opcodes, or truncated payloads. `pointer_size`
+/// is the width of pointer-sized fields in `data` (4 or 8), as recorded in
+/// the event header.
+pub(crate) fn decode_image_parts(
+    version: u8,
+    opcode: u8,
+    pointer_size: usize,
+    data: &[u8],
+) -> Option<DecodedEvent> {
     let parsed = match version {
-        2..=4 => parse_v3(data),
+        2..=4 => parse_v3(data, pointer_size),
         _ => None,
     }?;
 
@@ -59,18 +62,18 @@ pub(crate) fn decode_image_parts(version: u8, opcode: u8, data: &[u8]) -> Option
     }
 }
 
-fn parse_v3(data: &[u8]) -> Option<ImageCommon> {
-    if data.len() < REQUIRED_SIZE_V3 {
+fn parse_v3(data: &[u8], pointer_size: usize) -> Option<ImageCommon> {
+    if data.len() < required_size_v3(pointer_size) {
         return None;
     }
 
-    let (image_base, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
-    let (image_size, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
+    let (image_base, data) = extract_pointer_from_buffer(data, pointer_size)?;
+    let (image_size, data) = extract_pointer_from_buffer(data, pointer_size)?;
     let (process_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (checksum, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (timestamp, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (_, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
-    let (default_base, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
+    let (default_base, data) = extract_pointer_from_buffer(data, pointer_size)?;
     let (_, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (_, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (_, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
@@ -79,11 +82,11 @@ fn parse_v3(data: &[u8]) -> Option<ImageCommon> {
 
     Some(ImageCommon {
         process_id: ProcessId::new(process_id),
-        image_base: image_base as u64,
-        image_size: image_size as u64,
+        image_base,
+        image_size,
         checksum,
         timestamp,
-        default_base: default_base as u64,
+        default_base,
         file_name,
     })
 }

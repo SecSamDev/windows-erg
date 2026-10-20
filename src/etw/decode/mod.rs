@@ -11,8 +11,27 @@ pub use events::{
 };
 
 use super::types::TraceEvent;
-use windows::Win32::System::Diagnostics::Etw::{ImageLoadGuid, ProcessGuid};
+use windows::Win32::System::Diagnostics::Etw::{
+    EVENT_HEADER_FLAG_32_BIT_HEADER, EVENT_HEADER_FLAG_64_BIT_HEADER, ImageLoadGuid, ProcessGuid,
+};
 use windows::core::GUID;
+
+/// Size in bytes of pointer-sized payload fields, from `EVENT_HEADER.Flags`.
+///
+/// This is the pointer width of the session that logged the event, which
+/// differs from the consumer's when a 32-bit process reads 64-bit kernel
+/// events under WoW64. Falls back to the consumer's width when neither flag
+/// is set.
+pub(crate) fn pointer_size_from_header_flags(flags: u16) -> usize {
+    let flags = u32::from(flags);
+    if flags & EVENT_HEADER_FLAG_64_BIT_HEADER != 0 {
+        8
+    } else if flags & EVENT_HEADER_FLAG_32_BIT_HEADER != 0 {
+        4
+    } else {
+        size_of::<usize>()
+    }
+}
 
 /// Decode a captured [`TraceEvent`] into a typed [`DecodedEvent`].
 ///
@@ -23,6 +42,7 @@ pub(crate) fn decode_trace_event(event: &TraceEvent) -> DecodedEvent {
         event.provider_guid,
         event.version,
         event.opcode,
+        event.pointer_size,
         &event.data,
         event.fields(),
     )
@@ -39,17 +59,18 @@ pub(crate) fn decode_from_record_parts(
     provider_guid: GUID,
     version: u8,
     opcode: u8,
+    pointer_size: usize,
     data: &[u8],
     fields: Option<&[EventField]>,
 ) -> DecodedEvent {
     if provider_guid == ProcessGuid
-        && let Some(decoded) = process::decode_process_parts(version, opcode, data)
+        && let Some(decoded) = process::decode_process_parts(version, opcode, pointer_size, data)
     {
         return decoded;
     }
 
     if provider_guid == ImageLoadGuid
-        && let Some(decoded) = image::decode_image_parts(version, opcode, data)
+        && let Some(decoded) = image::decode_image_parts(version, opcode, pointer_size, data)
     {
         return decoded;
     }

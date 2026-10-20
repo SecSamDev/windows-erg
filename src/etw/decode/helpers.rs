@@ -5,12 +5,6 @@ pub(crate) trait FromBytes: Sized {
     fn from_le_bytes(data: &[u8]) -> Option<Self>;
 }
 
-impl FromBytes for usize {
-    fn from_le_bytes(data: &[u8]) -> Option<Self> {
-        Some(Self::from_le_bytes(data.try_into().ok()?))
-    }
-}
-
 impl FromBytes for u32 {
     fn from_le_bytes(data: &[u8]) -> Option<Self> {
         Some(Self::from_le_bytes(data.try_into().ok()?))
@@ -30,6 +24,19 @@ pub(crate) fn extract_value_from_buffer<T: FromBytes>(data: &[u8]) -> Option<(T,
     }
     let value = T::from_le_bytes(&data[..size])?;
     Some((value, &data[size..]))
+}
+
+/// Reads a pointer-sized field of `pointer_size` bytes (4 or 8, as recorded
+/// by the event, not the consumer's own pointer width) and widens it to u64.
+pub(crate) fn extract_pointer_from_buffer(
+    data: &[u8],
+    pointer_size: usize,
+) -> Option<(u64, &[u8])> {
+    match pointer_size {
+        4 => extract_value_from_buffer::<u32>(data).map(|(v, rest)| (u64::from(v), rest)),
+        8 => extract_value_from_buffer::<u64>(data),
+        _ => None,
+    }
 }
 
 /// Reads a null-terminated ASCII string from the front of `data`.

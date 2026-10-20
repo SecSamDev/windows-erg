@@ -541,7 +541,7 @@ unsafe extern "system" fn handler_window_proc(
         // lpCreateParams is the slot `WindowBuilder::create` passed.
         let slot = unsafe { (*(lparam.0 as *const CREATESTRUCTW)).lpCreateParams };
         // SAFETY: stores the slot pointer in this window's user data.
-        unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, slot as isize) };
+        unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, slot as _) };
     }
 
     // SAFETY: reads this window's user data, set above or still zero.

@@ -1,20 +1,20 @@
 use super::events::{DecodedEvent, ProcessEndEvent, ProcessStartEvent};
 use super::helpers::{
-    ascii_string_until_null, extract_value_from_buffer, sid_to_string_with_size, utf16_until_null,
+    ascii_string_until_null, extract_pointer_from_buffer, extract_value_from_buffer,
+    sid_to_string_with_size, utf16_until_null,
 };
 use crate::types::ProcessId;
 
 const PROCESS_START: u8 = 1;
 const PROCESS_END: u8 = 2;
 
-#[cfg(target_pointer_width = "32")]
-const POINTER_SIZE: usize = 4;
+const fn required_size_v0(pointer_size: usize) -> usize {
+    10 + 2 * pointer_size
+}
 
-#[cfg(target_pointer_width = "64")]
-const POINTER_SIZE: usize = 8;
-
-const REQUIRED_SIZE_V0: usize = 10 + 2 * POINTER_SIZE;
-const REQUIRED_SIZE_V1_TO_V4: usize = 11 * 4 + 4 * POINTER_SIZE;
+const fn required_size_v1_to_v4(pointer_size: usize) -> usize {
+    11 * 4 + 4 * pointer_size
+}
 
 #[derive(Debug, Clone)]
 struct ProcessCommon {
@@ -33,17 +33,23 @@ struct ProcessCommon {
 ///
 /// Supports process payload layouts for versions 0 through 4 and returns
 /// `None` when the opcode/version combination is not recognized or when the
-/// payload is truncated.
-pub(crate) fn decode_process_parts(version: u8, opcode: u8, data: &[u8]) -> Option<DecodedEvent> {
+/// payload is truncated. `pointer_size` is the width of pointer-sized fields
+/// in `data` (4 or 8), as recorded in the event header.
+pub(crate) fn decode_process_parts(
+    version: u8,
+    opcode: u8,
+    pointer_size: usize,
+    data: &[u8],
+) -> Option<DecodedEvent> {
     if opcode != PROCESS_START && opcode != PROCESS_END {
         return None;
     }
 
     let parsed = match version {
-        0 => parse_v0(data),
-        1 => parse_v1(data),
-        2 => parse_v2(data),
-        3 | 4 => parse_v3_v4(data),
+        0 => parse_v0(data, pointer_size),
+        1 => parse_v1(data, pointer_size),
+        2 => parse_v2(data, pointer_size),
+        3 | 4 => parse_v3_v4(data, pointer_size),
         _ => None,
     }?;
 
@@ -76,15 +82,15 @@ pub(crate) fn decode_process_parts(version: u8, opcode: u8, data: &[u8]) -> Opti
     })
 }
 
-fn parse_v0(data: &[u8]) -> Option<ProcessCommon> {
-    if data.len() < REQUIRED_SIZE_V0 {
+fn parse_v0(data: &[u8], pointer_size: usize) -> Option<ProcessCommon> {
+    if data.len() < required_size_v0(pointer_size) {
         return None;
     }
 
     let (process_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (parent_process_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
-    let (_, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
-    let (_, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
+    let (_, data) = extract_pointer_from_buffer(data, pointer_size)?;
+    let (_, data) = extract_pointer_from_buffer(data, pointer_size)?;
     let (_, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
 
     let (user_sid, sid_size) = sid_to_string_with_size(data)?;
@@ -104,18 +110,18 @@ fn parse_v0(data: &[u8]) -> Option<ProcessCommon> {
     })
 }
 
-fn parse_v1(data: &[u8]) -> Option<ProcessCommon> {
-    if data.len() < REQUIRED_SIZE_V1_TO_V4 {
+fn parse_v1(data: &[u8], pointer_size: usize) -> Option<ProcessCommon> {
+    if data.len() < required_size_v1_to_v4(pointer_size) {
         return None;
     }
 
-    let (directory_table_base, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
+    let (directory_table_base, data) = extract_pointer_from_buffer(data, pointer_size)?;
     let (process_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (parent_process_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (session_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (exit_status, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
-    let (_, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
-    let (_, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
+    let (_, data) = extract_pointer_from_buffer(data, pointer_size)?;
+    let (_, data) = extract_pointer_from_buffer(data, pointer_size)?;
     let (_, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
 
     let (user_sid, sid_size) = sid_to_string_with_size(data)?;
@@ -130,25 +136,25 @@ fn parse_v1(data: &[u8]) -> Option<ProcessCommon> {
         session_id: Some(session_id),
         exit_status: Some(exit_status),
         unique_process_key: None,
-        directory_table_base: Some(directory_table_base as u64),
+        directory_table_base: Some(directory_table_base),
         image_file_name,
         command_line: Some(command_line),
         user_sid: Some(user_sid),
     })
 }
 
-fn parse_v2(data: &[u8]) -> Option<ProcessCommon> {
-    if data.len() < REQUIRED_SIZE_V1_TO_V4 {
+fn parse_v2(data: &[u8], pointer_size: usize) -> Option<ProcessCommon> {
+    if data.len() < required_size_v1_to_v4(pointer_size) {
         return None;
     }
 
-    let (unique_process_key, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
+    let (unique_process_key, data) = extract_pointer_from_buffer(data, pointer_size)?;
     let (process_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (parent_process_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (session_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (exit_status, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
-    let (_, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
-    let (_, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
+    let (_, data) = extract_pointer_from_buffer(data, pointer_size)?;
+    let (_, data) = extract_pointer_from_buffer(data, pointer_size)?;
     let (_, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
 
     let (user_sid, sid_size) = sid_to_string_with_size(data)?;
@@ -162,7 +168,7 @@ fn parse_v2(data: &[u8]) -> Option<ProcessCommon> {
         parent_process_id: ProcessId::new(parent_process_id),
         session_id: Some(session_id),
         exit_status: Some(exit_status),
-        unique_process_key: Some(unique_process_key as u64),
+        unique_process_key: Some(unique_process_key),
         directory_table_base: None,
         image_file_name,
         command_line: Some(command_line),
@@ -170,19 +176,19 @@ fn parse_v2(data: &[u8]) -> Option<ProcessCommon> {
     })
 }
 
-fn parse_v3_v4(data: &[u8]) -> Option<ProcessCommon> {
-    if data.len() < REQUIRED_SIZE_V1_TO_V4 {
+fn parse_v3_v4(data: &[u8], pointer_size: usize) -> Option<ProcessCommon> {
+    if data.len() < required_size_v1_to_v4(pointer_size) {
         return None;
     }
 
-    let (unique_process_key, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
+    let (unique_process_key, data) = extract_pointer_from_buffer(data, pointer_size)?;
     let (process_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (parent_process_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (session_id, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
     let (exit_status, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
-    let (directory_table_base, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
-    let (_, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
-    let (_, data): (usize, &[u8]) = extract_value_from_buffer(data)?;
+    let (directory_table_base, data) = extract_pointer_from_buffer(data, pointer_size)?;
+    let (_, data) = extract_pointer_from_buffer(data, pointer_size)?;
+    let (_, data) = extract_pointer_from_buffer(data, pointer_size)?;
     let (_, data): (u32, &[u8]) = extract_value_from_buffer(data)?;
 
     let (user_sid, sid_size) = sid_to_string_with_size(data)?;
@@ -196,8 +202,8 @@ fn parse_v3_v4(data: &[u8]) -> Option<ProcessCommon> {
         parent_process_id: ProcessId::new(parent_process_id),
         session_id: Some(session_id),
         exit_status: Some(exit_status),
-        unique_process_key: Some(unique_process_key as u64),
-        directory_table_base: Some(directory_table_base as u64),
+        unique_process_key: Some(unique_process_key),
+        directory_table_base: Some(directory_table_base),
         image_file_name,
         command_line: Some(command_line),
         user_sid: Some(user_sid),

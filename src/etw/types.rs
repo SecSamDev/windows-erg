@@ -1,6 +1,6 @@
 //! ETW types and structures.
 
-use super::decode::{DecodedEvent, EventField, decode_trace_event};
+use super::decode::{DecodedEvent, EventField, decode_trace_event, pointer_size_from_header_flags};
 use crate::types::{ProcessId, ThreadId};
 use std::time::SystemTime;
 use windows::core::GUID;
@@ -187,6 +187,12 @@ pub struct TraceEvent {
     /// Raw binary payload. Layout depends on the provider and event ID.
     pub data: Vec<u8>,
 
+    /// Size in bytes (4 or 8) of pointer-sized fields in [`data`](Self::data),
+    /// taken from the event header. This is the logging session's pointer
+    /// width, which is 8 for kernel events on 64-bit Windows even when the
+    /// consumer is a 32-bit process.
+    pub pointer_size: usize,
+
     /// Optional thread context enrichment (enabled by `with_thread_context`).
     pub thread_context: Option<ThreadContext>,
 
@@ -242,6 +248,7 @@ impl TraceEvent {
             thread_id: ThreadId::new(header.ThreadId),
             timestamp,
             data,
+            pointer_size: pointer_size_from_header_flags(header.Flags),
             thread_context: None,
             stack_trace: None,
             cpu_sample: None,
@@ -341,6 +348,7 @@ mod tests {
                 213, 94, 151, 105, 93, 135, 89, 4, 0, 0, 99, 109, 100, 46, 101, 120, 101, 0, 0, 0,
                 0, 0,
             ],
+            pointer_size: 8,
             thread_context: None,
             stack_trace: None,
             cpu_sample: None,
@@ -379,6 +387,7 @@ mod tests {
                 109, 0, 105, 0, 116, 0, 105, 0, 118, 0, 101, 0, 115, 0, 46, 0, 100, 0, 108, 0, 108,
                 0, 0, 0,
             ],
+            pointer_size: 8,
             thread_context: None,
             stack_trace: None,
             cpu_sample: None,
@@ -401,6 +410,72 @@ mod tests {
     }
 
     #[test]
+    fn decode_image_load_event_with_32_bit_pointers() {
+        // Image v3 layout from a 32-bit logger: ImageBase, ImageSize (4-byte
+        // pointers), ProcessId, CheckSum, TimeDateStamp, Reserved0,
+        // DefaultBase (pointer), Reserved1..4, FileName.
+        let mut data = Vec::new();
+        data.extend_from_slice(&0x7700_0000u32.to_le_bytes());
+        data.extend_from_slice(&0x0002_0000u32.to_le_bytes());
+        data.extend_from_slice(&1234u32.to_le_bytes());
+        data.extend_from_slice(&[0; 12]);
+        data.extend_from_slice(&0x7700_0000u32.to_le_bytes());
+        data.extend_from_slice(&[0; 16]);
+        data.extend(
+            "C:\\x86.dll"
+                .encode_utf16()
+                .chain([0])
+                .flat_map(u16::to_le_bytes),
+        );
+
+        let event = TraceEvent {
+            id: 0,
+            version: 3,
+            opcode: 10,
+            level: 0,
+            provider_guid: ImageLoadGuid,
+            process_id: ProcessId::new(1234),
+            thread_id: ThreadId::new(0),
+            timestamp: SystemTime::UNIX_EPOCH,
+            data,
+            pointer_size: 4,
+            thread_context: None,
+            stack_trace: None,
+            cpu_sample: None,
+            fields: None,
+        };
+
+        match event.decode() {
+            DecodedEvent::ImageLoad(decoded) => {
+                assert_eq!(decoded.process_id, ProcessId::new(1234));
+                assert_eq!(decoded.image_base, 0x7700_0000);
+                assert_eq!(decoded.image_size, 0x0002_0000);
+                assert_eq!(decoded.default_base, 0x7700_0000);
+                assert_eq!(decoded.file_name, "C:\\x86.dll");
+            }
+            other => panic!("unexpected decode result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pointer_size_follows_event_header_flags() {
+        use crate::etw::decode::pointer_size_from_header_flags;
+        use windows::Win32::System::Diagnostics::Etw::{
+            EVENT_HEADER_FLAG_32_BIT_HEADER, EVENT_HEADER_FLAG_64_BIT_HEADER,
+        };
+
+        assert_eq!(
+            pointer_size_from_header_flags(EVENT_HEADER_FLAG_64_BIT_HEADER as u16),
+            8
+        );
+        assert_eq!(
+            pointer_size_from_header_flags(EVENT_HEADER_FLAG_32_BIT_HEADER as u16),
+            4
+        );
+        assert_eq!(pointer_size_from_header_flags(0), size_of::<usize>());
+    }
+
+    #[test]
     fn decode_generic_from_preparsed_fields() {
         let event = TraceEvent {
             id: 999,
@@ -412,6 +487,7 @@ mod tests {
             thread_id: ThreadId::new(1),
             timestamp: SystemTime::UNIX_EPOCH,
             data: Vec::new(),
+            pointer_size: 8,
             thread_context: None,
             stack_trace: None,
             cpu_sample: None,
@@ -442,6 +518,7 @@ mod tests {
             thread_id: ThreadId::new(1),
             timestamp: SystemTime::UNIX_EPOCH,
             data: Vec::new(),
+            pointer_size: 8,
             thread_context: None,
             stack_trace: None,
             cpu_sample: None,
@@ -491,6 +568,7 @@ mod tests {
             thread_id: ThreadId::new(1),
             timestamp: SystemTime::UNIX_EPOCH,
             data: Vec::new(),
+            pointer_size: 8,
             thread_context: None,
             stack_trace: None,
             cpu_sample: None,
@@ -537,6 +615,7 @@ mod tests {
             thread_id: ThreadId::new(1),
             timestamp: SystemTime::UNIX_EPOCH,
             data: Vec::new(),
+            pointer_size: 8,
             thread_context: None,
             stack_trace: None,
             cpu_sample: None,

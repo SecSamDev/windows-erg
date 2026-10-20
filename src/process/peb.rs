@@ -598,6 +598,8 @@ mod tests {
         );
     }
 
+    // The padding bits only exist on 64-bit, where the packed word is 8 bytes.
+    #[cfg(target_pointer_width = "64")]
     #[test]
     fn unicode_string_length_unpacks_the_low_16_bits() {
         // Length=42, MaximumLength=44 (packed low-to-high), arbitrary garbage
@@ -609,7 +611,7 @@ mod tests {
     #[test]
     fn unicode_string_length_ignores_maximum_length() {
         // MaximumLength (next 16 bits) must never be mistaken for Length.
-        let packed: usize = 0x0000_0000_FFFF_0005;
+        let packed: usize = 0xFFFF_0005;
         assert_eq!(unicode_string_length_from_packed_word(packed), 5);
     }
 
@@ -618,11 +620,12 @@ mod tests {
         // Verify that UNICODE_STRING has correct size and layout
         assert_eq!(
             size_of::<UNICODE_STRING>(),
-            16,
-            "UNICODE_STRING should be 16 bytes"
+            2 * size_of::<usize>(),
+            "UNICODE_STRING should be two machine words"
         );
     }
 
+    #[cfg(target_pointer_width = "64")]
     #[test]
     fn test_rtl_user_process_parameters_partial_layout() {
         // Verify that our partial struct has correct size

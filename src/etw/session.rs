@@ -1,6 +1,6 @@
 //! ETW trace session management.
 
-use super::decode::{DecodedEvent, decode_from_record_parts};
+use super::decode::{DecodedEvent, decode_from_record_parts, pointer_size_from_header_flags};
 use super::schema::SchemaCache;
 use super::types::{CpuSample, StackTrace, SystemProvider, ThreadContext, TraceEvent, TraceLevel};
 use crate::Result;
@@ -283,6 +283,7 @@ unsafe extern "system" fn trace_callback_fn(event_record: *mut EVENT_RECORD) {
             record.EventHeader.ProviderId,
             desc.Version,
             desc.Opcode,
+            pointer_size_from_header_flags(record.EventHeader.Flags),
             payload,
             fields.as_deref(),
         );
